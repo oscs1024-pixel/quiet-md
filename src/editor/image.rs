@@ -889,6 +889,7 @@ impl R<'_> {
                     e.open_lightbox(id, window, cx);
                 }))
         });
+        let draggable = !ed.read_only && !self.ghost;
         let image_box = div()
             .id(("image-box", id.0))
             .relative()
@@ -913,6 +914,10 @@ impl R<'_> {
                         e.core.cell_sel = None;
                         e.core.sel = Selection::caret(Pos::new(id, 0));
                         e.menu = None;
+                        // Reuse the block drag threshold, drop targets and undo transaction.
+                        if draggable {
+                            e.press_handle(id, ev.position);
+                        }
                         cx.notify();
                     }
                 }),
