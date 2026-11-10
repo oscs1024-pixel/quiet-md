@@ -908,7 +908,7 @@ impl R<'_> {
                     if !ev.modifiers.shift && e.img.crop.is_none() {
                         cx.stop_propagation();
                         window.prevent_default();
-                        window.focus(&e.focus);
+                        window.focus(&e.focus, cx);
                         e.core.clear_block_sel();
                         e.core.cell_sel = None;
                         e.core.sel = Selection::caret(Pos::new(id, 0));

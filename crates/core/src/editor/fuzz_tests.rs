@@ -121,7 +121,7 @@ fn step(c: &mut Core, rng: &mut Rng) -> String {
     }
     let us = c.units();
     let any = |rng: &mut Rng| rng.pick(&us).id;
-    match rng.below(26) {
+    match rng.below(31) {
         0..=2 => {
             let s = *rng.pick(TEXTS);
             c.insert_text(s);
@@ -225,6 +225,12 @@ fn step(c: &mut Core, rng: &mut Rng) -> String {
         20 if rng.chance(20) => board_step(c, rng),
         20 => table_step(c, rng),
         21 => object_step(c, rng),
+        26 => {
+            let id = c.doc.blocks.iter().find(|b| matches!(b.kind, BlockKind::Grid)).map(|b| b.id).unwrap_or_else(|| any(rng));
+            let gap = rng.below(81) as u16;
+            c.set_grid_gap(id, gap);
+            format!("set_grid_gap({id:?}, {gap})")
+        }
         22 => {
             if c.sel.head.block != TITLE && !c.is_code(c.sel.head.block) {
                 let images = parse("<title></title><img src=\"screenshot.png\"/><p></p>").unwrap();

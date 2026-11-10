@@ -894,6 +894,8 @@ pub struct Block {
     /// Collapsed (`folded="true"`): hides children, and for a heading its
     /// section too.
     pub folded: bool,
+    /// Optional Quiet.md grid gutter, in pixels. Missing values use 20px.
+    pub grid_gap: Option<u16>,
 }
 
 impl Block {
@@ -906,6 +908,7 @@ impl Block {
             bg: None,
             children: vec![],
             folded: false,
+            grid_gap: None,
         }
     }
 
