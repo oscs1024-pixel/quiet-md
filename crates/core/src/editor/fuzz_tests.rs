@@ -225,6 +225,12 @@ fn step(c: &mut Core, rng: &mut Rng) -> String {
         20 if rng.chance(20) => board_step(c, rng),
         20 => table_step(c, rng),
         21 => object_step(c, rng),
+        28 => {
+            let (image, target) = (any(rng), any(rng));
+            let before = rng.chance(50);
+            c.move_image_beside(image, target, before);
+            format!("move_image_beside({image:?}, {target:?}, {before})")
+        }
         27 => {
             let id = c.doc.blocks.iter().find(|b| matches!(b.kind, BlockKind::Grid)).map(|b| b.id).unwrap_or_else(|| any(rng));
             let align = *rng.pick(&[VerticalAlign::Top, VerticalAlign::Center, VerticalAlign::Bottom]);
