@@ -591,12 +591,12 @@ impl R<'_> {
                     MouseButton::Left,
                     cx.listener(move |e, _, window, cx| {
                         cx.stop_propagation();
-                        let selection = (e.core.sel, e.core.block_sel);
+                        let selection = (e.core.sel, e.core.block_sel.clone());
                         e.core.toggle_fold(id);
                         e.core.fix_selection();
                         e.keep_read_only_fold();
                         e.fold_anim = Some((id, web_time::Instant::now()));
-                        if selection == (e.core.sel, e.core.block_sel) {
+                        if selection == (e.core.sel, e.core.block_sel.clone()) {
                             e.changed_preserving_viewport(window, cx);
                         } else {
                             // A caret hidden by the fold was moved to its heading.
@@ -1404,7 +1404,7 @@ impl Editor {
             })
         };
         let (block, target) = match req {
-            Reveal::Caret => match self.core.block_sel {
+            Reveal::Caret => match &self.core.block_sel {
                 Some(b) => (b.head, self.block_bounds.borrow().get(&b.head).copied()),
                 // A selected image has no text layout: keep its box in view.
                 None => {

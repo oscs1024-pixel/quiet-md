@@ -240,7 +240,7 @@ impl Editor {
                 p = p.push(act_row(cx, "ctx-clear", "minus", crate::settings::text("清空内容"), move |e, window, cx| {
                     // The core clears the cell selection, so select this one
                     // cell, clear it and put the old selection back.
-                    let (sel, cells, blocks) = (e.core.sel, e.core.cell_sel, e.core.block_sel);
+                    let (sel, cells, blocks) = (e.core.sel, e.core.cell_sel, e.core.block_sel.clone());
                     let s = CellSel { table: block, anchor: (row, col), head: (row, col), kind: CellSelKind::Range };
                     e.core.select_cells(s);
                     e.core.table_clear_cells();

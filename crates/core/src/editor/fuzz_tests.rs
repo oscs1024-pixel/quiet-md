@@ -225,6 +225,16 @@ fn step(c: &mut Core, rng: &mut Rng) -> String {
         20 if rng.chance(20) => board_step(c, rng),
         20 => table_step(c, rng),
         21 => object_step(c, rng),
+        30 => {
+            let id = any(rng);
+            c.toggle_image_selection(id);
+            format!("toggle_image_selection({id:?})")
+        }
+        29 => {
+            let head = any(rng);
+            c.extend_block_selection(head);
+            format!("extend_block_selection({head:?})")
+        }
         28 => {
             let (image, target) = (any(rng), any(rng));
             let before = rng.chance(50);
@@ -530,7 +540,7 @@ fn check(c: &Core) -> Result<(), String> {
     check_text(&c.doc.title, "title")?;
     check_blocks(&c.doc.blocks, None, &mut HashSet::new())?;
     let us = c.units();
-    if let Some(bs) = c.block_sel {
+    if let Some(bs) = &c.block_sel {
         // Block mode: the text selection is not shown; its ends are.
         for id in [bs.anchor, bs.head] {
             if c.block(id).is_none() || c.is_hidden(id) {
