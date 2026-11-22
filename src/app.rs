@@ -286,6 +286,8 @@ pub struct Workspace {
     sidebar_was_open: bool,
     /// The window width before that widening, until the window takes the new size.
     widen_from: Option<f32>,
+    /// The keyboard's height last frame (iOS): when it grows, the caret is scrolled back into view.
+    keyboard_inset: f32,
     /// Narrowing the window hid the sidebar (not the user): widening it until
     /// the sidebar fits shows it again.
     sidebar_auto_hidden: bool,
@@ -564,6 +566,7 @@ impl Workspace {
             sidebar_width,
             sidebar_was_open: false,
             widen_from: None,
+            keyboard_inset: 0.,
             sidebar_auto_hidden: false,
             sidebar_drag: false,
             folder_current: None,
@@ -788,7 +791,8 @@ impl Workspace {
             }
         }));
         // Opening a document puts the caret in it, unless the user is typing a search.
-        if !self.search_open {
+        // Not on iOS, where a focused editor brings up the keyboard: a tap in the text does.
+        if !self.search_open && !cfg!(target_os = "ios") {
             { let f = editor.read(cx).focus.clone(); window.focus(&f, cx); }
         }
         // A 画板 opens straight into its board, over the whole window.
@@ -1776,6 +1780,15 @@ impl Render for Workspace {
         // sidebar instead of being refused. The window's own minimum is DOC_MIN_W.
         let vs = window.viewport_size();
         let vw = f32::from(vs.width);
+        // iOS: the status bar, the home indicator and the keyboard cover the window's
+        // edges (zero elsewhere). The window shrinks above the keyboard; the sidebar
+        // and the note's contents keep clear of the bars while the note's page runs
+        // under them. A taller keyboard scrolls the caret back above it.
+        let insets = window.insets();
+        let (inset_top, inset_bottom) = (f32::from(insets.safe_area.top), f32::from(insets.safe_area.bottom));
+        let keyboard = f32::from(insets.ime.bottom);
+        if keyboard > self.keyboard_inset + 0.5 && let Some(ed) = &self.editor { ed.update(cx, |e, cx| { e.autoscroll = true; cx.notify(); }); }
+        self.keyboard_inset = keyboard;
         if self.widen_from.is_some_and(|w| (w - vw).abs() > 0.5) { self.widen_from = None; }
         // The web build's window is the page: never resized from here.
         // Opened by hand: no longer waiting to come back by itself.
@@ -1853,7 +1866,7 @@ impl Render for Workspace {
         // the two (no gutter, radius or border).
         // A document sits on its theme's page colour.
         let page = if self.view == View::Doc { crate::editor_theme::Theme::bg_body() } else { Theme::bg_body() };
-        let note = div().id("note").relative().flex_1().min_w_0().h_full().flex().bg(page).shadow(theme::shadow_note()).child(main)
+        let note = div().id("note").relative().flex_1().min_w_0().h_full().pt(px(inset_top)).flex().bg(page).shadow(theme::shadow_note()).child(main)
             // Files from the Finder dropped on 主页 or a folder's page are imported there.
             .when(matches!(self.view, View::Home | View::Folder), |d| d
                 .on_drag_move(cx.listener(|w, ev: &DragMoveEvent<ExternalPaths>, _, cx| w.file_drag_move(ev, cx)))
@@ -1875,6 +1888,7 @@ impl Render for Workspace {
             }))
             .relative()
             .size_full()
+            .pb(px(keyboard))
             .flex()
             .bg(Theme::window())
             .font_family(theme::ui_family())
@@ -1987,7 +2001,7 @@ impl Render for Workspace {
                 if w.search_open { w.close_search(window, cx); } else { w.open_search(window, cx); }
                 cx.stop_propagation();
             }))
-            .children(sidebar)
+            .children(sidebar.map(|s| if inset_top + inset_bottom > 0. { div().flex_none().h_full().pt(px(inset_top)).pb(px(if keyboard > 0. { 0. } else { inset_bottom })).child(s).into_any_element() } else { s }))
             .child(note)
             .children(resize)
             .children(crate::ui::window_controls(window))
