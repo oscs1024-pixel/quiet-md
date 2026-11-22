@@ -14,6 +14,7 @@ mod mcp;
 mod output;
 mod session;
 mod tables;
+mod usage;
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
@@ -211,9 +212,12 @@ fn to_calls(cmd: &str, a: &mut Args, input: &mut Input) -> R<(Vec<(String, Value
 fn main() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let json_out = raw.iter().any(|s| s == "--json");
-    if raw.first().map(String::as_str) == Some("mcp") { std::process::exit(mcp::serve(raw[1..].to_vec())); }
+    if raw.first().map(String::as_str) == Some("__send-usage") { std::process::exit(usage::send()); }
+    if raw.first().map(String::as_str) == Some("mcp") { usage::count("mcp", true); std::process::exit(mcp::serve(raw[1..].to_vec())); }
+    let name = usage::name(&raw);
     let mut out = String::new();
     let r = execute(raw, Input(None), &mut out);
+    usage::count(&name, r.is_ok());
     print!("{out}");
     if let Err(e) = r {
         if json_out { eprintln!("{}", e.json()); } else { eprintln!("{}", e.text()); }
@@ -234,6 +238,7 @@ pub fn execute(raw: Vec<String>, mut input: Input, out: &mut String) -> R<()> {
         "skill" | "guide" if a.pos.first().map(String::as_str) == Some("install") => { *out += &install_skill(&a)?; return Ok(()); }
         "skill" | "guide" => { *out += GUIDE; return Ok(()); }
         "version" => { *out += &format!("quiet {}\n", env!("CARGO_PKG_VERSION")); return Ok(()); }
+        "telemetry" => { *out += &usage::command(a.pos.first().map(String::as_str))?; return Ok(()); }
         _ if a.has("help") => { *out += &help::of(Some(&cmd))?; return Ok(()); }
         _ => {}
     }

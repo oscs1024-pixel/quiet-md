@@ -22,7 +22,7 @@ fn library(docs: &[(&str, &str)]) -> PathBuf {
 }
 
 fn quiet(lib: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_quiet")).arg("--library").arg(lib).args(args).output().unwrap()
+    Command::new(env!("CARGO_BIN_EXE_quiet")).env("QUIET_NO_TELEMETRY", "1").arg("--library").arg(lib).args(args).output().unwrap()
 }
 
 fn ok(lib: &Path, args: &[&str]) -> String {
@@ -299,7 +299,7 @@ fn imports_files_but_not_from_scripts() {
 #[test]
 fn every_command_has_help() {
     let lib = library(&[]);
-    for c in ["ls", "find", "outline", "read", "blocks", "links", "check", "new", "mkdir", "insert", "replace", "delete", "move", "set", "rename", "mv", "rm", "table", "board", "history", "restore", "trash", "untrash", "import", "run", "call", "mcp", "skill"] {
+    for c in ["ls", "find", "outline", "read", "blocks", "links", "check", "new", "mkdir", "insert", "replace", "delete", "move", "set", "rename", "mv", "rm", "table", "board", "history", "restore", "trash", "untrash", "import", "run", "call", "mcp", "skill", "telemetry"] {
         let out = ok(&lib, &["help", c]);
         assert!(out.starts_with(&format!("quiet {c}")), "{c}: {out}");
     }
@@ -310,7 +310,7 @@ fn every_command_has_help() {
 fn serves_mcp() {
     use std::io::Write;
     let lib = library(&[("Plan", PLAN)]);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_quiet")).args(["mcp", "--library"]).arg(&lib)
+    let mut child = Command::new(env!("CARGO_BIN_EXE_quiet")).env("QUIET_NO_TELEMETRY", "1").args(["mcp", "--library"]).arg(&lib)
         .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
     let msgs = [
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{}}}"#,
@@ -457,4 +457,74 @@ fn installs_the_agent_skill() {
     let o = quiet(&lib, &["skill", "install", "--dir", dir.to_str().unwrap()]);
     assert!(String::from_utf8_lossy(&o.stderr).starts_with("error[exists]"));
     assert_eq!(std::fs::read_to_string(dir.join("quiet/SKILL.md")).unwrap(), "---\nname: quiet\n---\nmine");
+}
+
+/// `quiet` counting into `usage` (a file of the test's own), nothing in the environment turning it off.
+fn counted(lib: &Path, usage: &Path, args: &[&str], url: Option<&str>) -> Output {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_quiet"));
+    c.env_remove("QUIET_NO_TELEMETRY").env_remove("DO_NOT_TRACK").env_remove("CI").env("QUIET_MD_HOME", lib).env("QUIET_TELEMETRY_FILE", usage);
+    c.env("QUIET_TELEMETRY_URL", url.unwrap_or("http://127.0.0.1:9/never"));
+    c.args(args).output().unwrap()
+}
+
+#[test]
+fn usage_is_counted_by_command_name_only() {
+    let lib = library(&[("Secret plan", PLAN)]);
+    let usage = lib.with_extension("usage.json");
+    let first = counted(&lib, &usage, &["read", "Secret plan"], None);
+    assert!(String::from_utf8_lossy(&first.stderr).contains("quiet telemetry off"), "said once that it counts");
+    let again = counted(&lib, &usage, &["table", "add", "Secret plan", "--set", "x=1"], None);
+    assert!(!String::from_utf8_lossy(&again.stderr).contains("quiet telemetry off"));
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&usage).unwrap()).unwrap();
+    let today = v["days"].as_object().unwrap().values().next().unwrap().clone();
+    assert_eq!((today["runs"].as_u64(), today["errors"].as_u64()), (Some(2), Some(1)));
+    assert_eq!(today["commands"]["table add"], 1);
+    let text = std::fs::read_to_string(&usage).unwrap();
+    assert!(!text.contains("Secret") && !text.contains("x=1"), "no names, no arguments: {text}");
+    // Off: forgotten, and nothing more is counted.
+    counted(&lib, &usage, &["telemetry", "off"], None);
+    counted(&lib, &usage, &["ls"], None);
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&usage).unwrap()).unwrap();
+    assert!(v.get("days").is_none() && v.get("id").is_none(), "{v}");
+    // The app's 自动检查更新 off: nothing is written at all.
+    let other = lib.with_extension("usage2.json");
+    std::fs::write(lib.join(".quiet/preferences.json"), r#"{"auto_update": false}"#).unwrap();
+    counted(&lib, &other, &["ls"], None);
+    assert!(!other.exists());
+}
+
+#[test]
+fn finished_days_are_sent_and_forgotten() {
+    use std::io::{Read, Write};
+    let lib = library(&[]);
+    let usage = lib.with_extension("usage.json");
+    std::fs::write(&usage, r#"{"id":"0b8e8f2e-3c4a-4b7e-9d55-5f6f7a8b9c0d","noticed":true,"days":{"2020-01-01":{"runs":3,"errors":0,"commands":{"read":3}},"2999-01-01":{"runs":1,"errors":0,"commands":{"ls":1}}}}"#).unwrap();
+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/cli", server.local_addr().unwrap());
+    let got = std::thread::spawn(move || {
+        let (mut s, _) = server.accept().unwrap();
+        let mut buf = vec![0u8; 65536];
+        let mut req = Vec::new();
+        loop {
+            let n = s.read(&mut buf).unwrap();
+            req.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&req).to_string();
+            if let Some(head) = text.find("\r\n\r\n") {
+                let len: usize = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap_or(0);
+                if req.len() >= head + 4 + len { break; }
+            }
+            if n == 0 { break; }
+        }
+        s.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").unwrap();
+        String::from_utf8_lossy(&req).to_string()
+    });
+    let o = counted(&lib, &usage, &["__send-usage"], Some(&url));
+    assert!(o.status.success());
+    let req = got.join().unwrap();
+    assert!(req.starts_with("POST /v1/cli"), "{req}");
+    let body: serde_json::Value = serde_json::from_str(&req[req.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+    assert_eq!(body["days"].as_array().unwrap().len(), 1, "today's (here: a future day) is not finished: {body}");
+    assert_eq!(body["days"][0]["commands"]["read"], 3);
+    let left: serde_json::Value = serde_json::from_slice(&std::fs::read(&usage).unwrap()).unwrap();
+    assert!(left["days"].get("2020-01-01").is_none() && left["days"].get("2999-01-01").is_some());
 }

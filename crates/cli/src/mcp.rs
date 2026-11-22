@@ -52,8 +52,11 @@ fn call(name: &str, args: &Value, library: &[String]) -> (String, bool) {
         }
         _ => return (format!("no tool {name:?}"), true),
     }
+    let name = crate::usage::name(&raw);
     let mut out = String::new();
-    match execute(raw, Input(Some(input.unwrap_or_default())), &mut out) {
+    let r = execute(raw, Input(Some(input.unwrap_or_default())), &mut out);
+    crate::usage::count(&name, r.is_ok());
+    match r {
         Ok(()) => (out, false),
         Err(e) => { if !out.is_empty() && !out.ends_with('\n') { out.push('\n'); } out += &e.text(); (out, true) }
     }

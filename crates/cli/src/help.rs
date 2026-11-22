@@ -36,6 +36,7 @@ pub const HELP: &str = "quiet — read, search, edit and script a Quiet.md libra
   quiet skill                            the full guide for agents (script API included)
   quiet skill install                    the agent skill, for Claude Code and Codex
   quiet help COMMAND                     one command in detail
+  quiet telemetry [on|off|status]        the anonymous daily usage counts
 
 Writes take --dry-run (show the diff, write nothing) and --expect-rev REV.
 DOC is a path (工作/周报.xml, extension optional) or a title. REF is what
@@ -198,6 +199,15 @@ document as \"doc\" and a block as \"at\".
 An MCP server on stdin/stdout with two tools: `quiet` (a command line) and
 `quiet_run` (a script). For agents that speak MCP but have no shell. E.g. in
 an MCP client's settings: {\"command\": \"quiet\", \"args\": [\"mcp\"]}"),
+    (&["telemetry"], "quiet telemetry [on|off|status]
+
+quiet counts how often its commands run: per day, how many ran and failed and
+which commands (by name), under a random id for this computer. Never the
+library, documents, titles or arguments. Finished days are sent once a day to
+stats.quiet.md, with quiet's version and the system (macos/windows, arm or x86).
+`status` shows what is kept and waiting; `off` stops it and forgets the id.
+Nothing is counted while DO_NOT_TRACK or QUIET_NO_TELEMETRY is set, in CI, or
+while 自动检查更新 (Check for updates automatically) is off in Quiet.md."),
     (&["skill", "guide"], "quiet skill
 quiet skill install [--dir DIR]… [--force]
 

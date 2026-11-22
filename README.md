@@ -43,7 +43,7 @@
 
 ## Why Quiet.md
 
-**📁 Your notes are just files.** No account, no cloud, and nothing goes over the network by default, apart from the optional update check and font downloads you cause: the handwriting font for Chinese, Japanese and Korean the first time a whiteboard needs it, and a downloadable document font when you pick one. Every folder in the sidebar is a real folder on your disk, and every note is a file named after its title: `.md` for Markdown, `.xml` for rich documents. Sync them with iCloud, Git or anything you like. If you ever stop using Quiet.md, your files stay right where they are.
+**📁 Your notes are just files.** No account, no cloud, and nothing goes over the network by default, apart from the optional update check, the `quiet` command line tool's anonymous daily usage counts (`quiet telemetry off`), and font downloads you cause: the handwriting font for Chinese, Japanese and Korean the first time a whiteboard needs it, and a downloadable document font when you pick one. Every folder in the sidebar is a real folder on your disk, and every note is a file named after its title: `.md` for Markdown, `.xml` for rich documents. Sync them with iCloud, Git or anything you like. If you ever stop using Quiet.md, your files stay right where they are.
 
 **⚡ Native, and fast.** The whole interface is drawn on the GPU by Rust and [GPUI](https://www.gpui.rs/). No Electron, no WebView. In a one-million-character note, typing takes about 5 ms a frame, and a 120 Hz display allows 8.3.
 
@@ -81,7 +81,7 @@ On first launch, Quiet.md looks for your Obsidian, Logseq, iA Writer and Typora 
 
 ### Work with agents
 
-The `quiet` command line tool lets an AI agent (Claude Code, Codex, or any MCP client) read, search and edit the same library you write in. It finds blocks by outline, edits through the same engine as the app, rewrites links when notes move, adds rows to data tables and draws on boards, and refuses to overwrite what you changed since it read. A note you have open takes in the agent's edit as it lands, every save keeps the previous text as a version, and `quiet run` takes a whole JavaScript script as one change that is written in full or not at all. `quiet skill install` gives Claude Code and Codex a skill, so they reach for `quiet` whenever you ask about your notes; clients without a shell use `quiet mcp`.
+The `quiet` command line tool lets an AI agent (Claude Code, Codex, or any MCP client) read, search and edit the same library you write in. It finds blocks by outline, edits through the same engine as the app, rewrites links when notes move, adds rows to data tables and draws on boards, and refuses to overwrite what you changed since it read. A note you have open takes in the agent's edit as it lands, every save keeps the previous text as a version, and `quiet run` takes a whole JavaScript script as one change that is written in full or not at all. `quiet skill install` gives Claude Code and Codex a skill, so they reach for `quiet` whenever you ask about your notes; clients without a shell use `quiet mcp`. `quiet` counts which of its commands run each day, under a random id and never with your notes, and sends the counts once a day; `quiet telemetry off`, `DO_NOT_TRACK=1` or turning off the app's automatic update check stops it.
 
 `quiet` ships inside the app. On macOS, put it on your PATH with `ln -s /Applications/quiet.md.app/Contents/MacOS/quiet /usr/local/bin/quiet`; on Windows it sits beside `quiet_md.exe` in the install folder. See [docs/design/CLI.md](docs/design/CLI.md).
 

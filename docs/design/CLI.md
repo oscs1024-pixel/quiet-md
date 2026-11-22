@@ -59,6 +59,7 @@
 | `js.rs`、`prelude.js` | 脚本 |
 | `mcp.rs` | MCP 服务 |
 | `help.rs`、`guide.md`、`skill.md` | 帮助、指南和配套 skill |
+| `usage.rs` | 匿名用量统计 |
 
 测试在 `crates/cli/tests/cli.rs`。
 
@@ -86,6 +87,30 @@
 | 按章节读会带上标题（评估发现） | 拆分文档时，标题既是文档名又出现在正文里 | `--no-heading`（脚本里是 `{heading: false}`），指南里的拆分示例也改用它 | ✅ |
 | 看不出每个版本改了什么（评估发现） | `restore` 只能凭时间猜 | `history` 每个版本附「那次保存改了几行」（`then +3 -1`） | ✅ |
 | 指南误导（评估发现） | 指南说新建的文档要到脚本结束才生效，三个模型都以为同一脚本里不能往新画板上画，多跑了一次 | 改写说明，补上画板示例；示例优先用脚本文件，不用 heredoc | ✅ |
+
+## 用量统计
+
+用来回答：每天多少人在用 CLI、用了多少次、用哪些命令。数据进 stats.quiet.md 看板的 CLI 版块。
+
+**记什么：**
+- 每台电脑一个随机 id，加 quiet 版本和系统。
+- 每天的调用次数、失败次数、各命令名各几次。
+- 不记文档、标题、路径、参数，不存 IP。
+
+**怎么发：**
+- 每次运行只在本地计数（`<数据目录>/quiet-md/cli-usage.json`）。
+- 已经结束的日子，至多每小时一次，由后台的 `quiet __send-usage` 用系统 `curl` 发到 `POST telemetry.quiet.md/v1/cli`，不拖慢命令本身。
+- 服务端是 `services/stats` Worker：存进 `cli_reports`，每天 00:30 UTC 汇总成 `cli.*` 指标。
+
+**默认开启**（用户 2026-11-22 定的）：
+- 第一次运行时在 stderr 说明一次。
+- `quiet telemetry off` 关闭并忘掉 id，`quiet telemetry status` 查看本地记了什么。
+- 以下情况完全不计数：设置了 `DO_NOT_TRACK` 或 `QUIET_NO_TELEMETRY`；在 CI 里；应用里关了「自动检查更新」。
+- README 的隐私说明相应写明了这一点。
+
+**看板：**
+- 每日用户（含新用户）、每日调用（成功和失败堆叠）、近 7 天常用命令、昨日版本与系统分布。
+- 平台筛选按系统：macOS 不分芯片。
 
 ## 评估
 

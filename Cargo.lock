@@ -4300,10 +4300,12 @@ name = "quiet_cli"
 version = "0.1.14"
 dependencies = [
  "anyhow",
+ "dirs 7.0.0",
  "fdl_core",
  "rquickjs",
  "serde_json",
  "sha1_smol",
+ "uuid",
 ]
 
 [[package]]
