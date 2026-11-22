@@ -524,6 +524,9 @@ impl Workspace {
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     if let Some(id) = &this.current { crate::quick_note::used(id, cx); }
+                    // Several windows share one root in front: the one coming forward
+                    // puts its own back (its pasted images, its look).
+                    if let Some(id) = this.current.clone().or_else(|| this.folder_current.clone()) && this.store.set_active(&id) { cx.defer(crate::settings::root_switched); }
                     if !this.store.file_task_busy() { this.entries = this.store.list(); this.sort(); this.refresh_markdown(Some(window.window_handle().window_id()), cx); }
                     crate::update::check_if_stale(cx); cx.notify();
                 }
@@ -713,7 +716,7 @@ impl Workspace {
         // notebook first.
         match document {
             Some(id) => ws.open(&id, window, cx),
-            None if quick => ws.new_doc(window, cx),
+            None if quick => ws.new_quick_note(window, cx),
             None if !crate::settings::prefs().start_home && !cfg!(target_family = "wasm") => {
                 // Nothing read yet (a fresh library, whose guides all start at
                 // `opened == 0`): the first document, as before — `max_by_key`
@@ -906,6 +909,13 @@ impl Workspace {
     /// one made from the 新建 menu) in the current place.
     pub fn new_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let parent = self.creation_parent();
+        self.create_doc(crate::settings::quick_new_markdown(), parent, window, cx);
+    }
+
+    /// A 快速笔记 window's own note: at the top of the root Settings › 文档库
+    /// picks (2.8), else the first open root.
+    fn new_quick_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let parent = self.store.quick_note_root().map(|k| crate::shared_store::root_row(&k));
         self.create_doc(crate::settings::quick_new_markdown(), parent, window, cx);
     }
 
@@ -1120,7 +1130,8 @@ impl Workspace {
 
     /// 重命名: the row's title turns into an input; Enter or clicking away saves, Esc cancels.
     pub fn start_rename(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if crate::shared_store::root_of_row(id).is_some() { return; }
+        // A root's row renames its folder on disk (2.11), where that is allowed.
+        if crate::shared_store::root_of_row(id).is_some_and(|k| !self.store.can_rename_root(k)) { return; }
         let Some(title) = self.entries.iter().find(|e| e.id == id).map(|e| e.title.trim().to_string()) else { return };
         let field = cx.new(|cx| {
             let mut f = TextField::new(crate::model::UNTITLED, cx);
@@ -1151,6 +1162,11 @@ impl Workspace {
         let refocus = r.field.read(cx).is_focused(window);
         let title = r.field.read(cx).text.trim().to_string();
         let old = self.entries.iter().find(|e| e.id == r.id).map(|e| e.title.trim().to_string());
+        if let Some(key) = crate::shared_store::root_of_row(&r.id) {
+            if commit && old.is_some_and(|o| o != title) { self.rename_root(key, &title, window, cx); }
+            cx.notify();
+            return;
+        }
         // A document with children is renamed through its 正文, which renames the folder too.
         let r = Rename { id: self.note_or(&r.id), ..r };
         if commit && old.is_some_and(|o| o != title) {
@@ -1362,7 +1378,7 @@ impl Workspace {
                     e.body = body.into();
                     e.reminders = reminders;
                     e.links = links;
-                    e.meta = meta.clone();
+                    e.meta = self.store.as_row(&id, meta.clone());
                 }
                 // A mirrored edit was saved by this window. A sibling must not
                 // later write it a second time over a newer external edit.
@@ -1409,7 +1425,9 @@ impl Workspace {
     pub(crate) fn migrate_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.save_before(cx, |w, window, cx| w.migrate_library(window, cx)) { return }
         let root = crate::store::Store::root_dir();
-        let moved = crate::store::Store::migrate(&root).and_then(|r| Ok((r, crate::store::Store::open_at(root.clone())?)));
+        // Reopened under the same root key: what this computer keeps about it stays.
+        let key = self.store.with(None, |s| Ok(s.key().to_string())).unwrap_or_else(|_| crate::store::library_key(&root));
+        let moved = crate::store::Store::migrate(&root).and_then(|r| Ok((r, crate::store::Store::open_at_as(root.clone(), &key)?)));
         match moved {
             Err(e) => self.show_toast_kind(ToastKind::Error, &crate::localized_format!("没能改为真实文件夹，文档库保持原样：{}", "Couldn't move to real folders; the library is unchanged: {}", crate::settings::diagnostic(&e.to_string())), cx),
             Ok((report, store)) => {

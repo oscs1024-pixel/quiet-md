@@ -367,6 +367,9 @@ pub struct Store {
     seen: std::cell::RefCell<HashMap<String, BTreeMap<String, serde_json::Value>>>,
     /// Every device's file as last read or written.
     merged: std::cell::RefCell<meta::Merged>,
+    /// What this computer's data about the library is named by: its 工作区
+    /// root key, else `library_key` of its path.
+    key: String,
 }
 
 /// What switching documents remembers in memory only: each write of it is an
@@ -410,11 +413,11 @@ struct CachedDoc {
 
 fn parsed_cache_version() -> String { format!("{}-{PARSED_CACHE}", env!("CARGO_PKG_VERSION")) }
 
-/// Beside the other things this computer keeps about `root`, in the cache folder.
-fn parsed_cache_path(root: &Path) -> PathBuf {
+/// Beside the other things this computer keeps about `root` (named by `key`), in the cache folder.
+fn parsed_cache_path(root: &Path, key: &str) -> PathBuf {
     let tmp = crate::vfs::temp_dir();
     let base = if cfg!(test) || root.starts_with(&tmp) { tmp.join("quiet-md-local") } else { dirs::cache_dir().unwrap_or(tmp).join("quiet-md") };
-    base.join("list").join(format!("{}.json", library_key(root)))
+    base.join("list").join(format!("{key}.json"))
 }
 
 /// One write to the indexes: several copies of the app may share a library
@@ -704,8 +707,10 @@ pub fn read_bounded(path: &std::path::Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// A short stable name for a library folder, for data kept about it elsewhere.
-fn library_key(root: &Path) -> String {
+/// A short stable name for a library folder, for data kept about it elsewhere:
+/// a lone `Store`'s (tests, `QUIET_MD_HOME`). A 工作区 root's is its key in
+/// `roots.json` instead, which a rename leaves alone (`Store::open_at_as`).
+pub fn library_key(root: &Path) -> String {
     use std::hash::{Hash, Hasher};
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     root.hash(&mut hash);
@@ -713,9 +718,9 @@ fn library_key(root: &Path) -> String {
 }
 
 /// Where this computer keeps what is not `root`'s own: the application data
-/// folder, by library; a temporary one for tests and libraries in the
+/// folder, by library (`key`); a temporary one for tests and libraries in the
 /// temporary folder (scripted runs), which never touch the real one.
-fn local_file_for(root: &Path) -> PathBuf { local_base(root).join("libraries").join(format!("{}.json", library_key(root))) }
+fn local_file_for(root: &Path, key: &str) -> PathBuf { local_base(root).join("libraries").join(format!("{key}.json")) }
 
 /// The application data folder `local_file_for` uses; `root` empty: this
 /// computer's (a scripted run with `QUIET_MD_HOME` gets a temporary one).
@@ -732,6 +737,9 @@ fn listed(key: &str) -> bool {
     let rel = key.trim_end_matches('/');
     !(rel.is_empty() || rel.split('/').any(|p| p.is_empty() || p.starts_with('.')) || (!key.ends_with('/') && DocKind::of_name(rel).is_none()))
 }
+
+/// The recovery copies (`Store::recover_later`) of library `key`.
+fn recovery_dir_for(key: &str) -> PathBuf { dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join("quiet-md/recovery").join(key) }
 
 /// The id, name and parent of every library entry, from where it is.
 fn derive_tree(index: &mut HashMap<String, Meta>) {
@@ -810,7 +818,8 @@ impl Store {
                 for e in rd.flatten() { if e.path().fs_is_file() { let _ = crate::vfs::copy(e.path(), d.join("themes").join(e.file_name())); } }
             }
             // The window's place was this computer's state about that library.
-            let local: Local = reread(&local_file_for(&Self::legacy_root())).unwrap_or_default();
+            let legacy = Self::legacy_root();
+            let local: Local = reread(&local_file_for(&legacy, &library_key(&legacy))).unwrap_or_default();
             let mut s: Settings = reread(&d.join("settings.json")).unwrap_or_default();
             (s.window_size, s.window_origin, s.window_display, s.quick_note_size) = (local.window_size, local.window_origin, local.window_display, local.quick_note_size.or(s.quick_note_size));
             if let Ok(b) = serde_json::to_vec_pretty(&s) { let _ = write_atomic(&d.join("settings.json"), &b); }
@@ -1085,14 +1094,17 @@ impl Store {
     pub fn open() -> Result<Self> { Self::open_library(Self::legacy_root()) }
 
     /// `open` for the library at `root`.
-    pub fn open_library(root: PathBuf) -> Result<Self> {
+    pub fn open_library(root: PathBuf) -> Result<Self> { let key = library_key(&root); Self::open_library_as(root, &key) }
+
+    /// `open_library` for 工作区 root `key` (see `open_at_as`).
+    pub fn open_library_as(root: PathBuf, key: &str) -> Result<Self> {
         Self::prune_backups(&root);
         let mut failed = None;
         let report = match Self::migration_state(&root) {
             MigrationState::Silent => Self::migrate(&root).map_err(|e| failed = Some(e.to_string())).ok(),
             _ => None,
         };
-        let mut store = Self::open_at(root)?;
+        let mut store = Self::open_at_as(root, key)?;
         store.migrated = report;
         store.warnings.extend(failed);
         Ok(store)
@@ -1124,15 +1136,18 @@ impl Store {
     /// A root folder of the 工作区, as it is: one that is not there (an
     /// unplugged disk, renamed in the Finder) is an error, never made anew.
     /// A plain folder gets its `.quiet/`; an old layout is not moved.
-    pub fn open_root(root: &Path) -> Result<Self> {
+    pub fn open_root(root: &Path) -> Result<Self> { Self::open_root_as(root, &library_key(root)) }
+
+    /// `open_root` for 工作区 root `key` (see `open_at_as`).
+    pub fn open_root_as(root: &Path, key: &str) -> Result<Self> {
         anyhow::ensure!(root.fs_is_dir(), "找不到这个文件夹");
-        Self::open_at(root.to_path_buf())
+        Self::open_at_as(root.to_path_buf(), key)
     }
 
     /// The folders the library at `root` had opened in place (本机文件夹)
     /// before 工作区: roots of their own now.
     pub fn legacy_mounts(root: &Path) -> Vec<PathBuf> {
-        let local: Local = reread(&local_file_for(root)).unwrap_or_default();
+        let local: Local = reread(&local_file_for(root, &library_key(root))).unwrap_or_default();
         let mut v: Vec<PathBuf> = local.files.values().filter(|m| m.folder.is_some() && m.parent.is_none()).filter_map(|m| m.path.as_deref().map(PathBuf::from)).collect();
         v.sort();
         v
@@ -1184,11 +1199,18 @@ impl Store {
     /// FORMAT 4 becomes 5 on opening unless it is in a synced folder, where
     /// another computer may still run a build that cannot read 5 (sync.md 3.3):
     /// it stays 4 until the user agrees.
-    pub fn open_at(root: PathBuf) -> Result<Self> { Self::open_as(root, device()) }
+    pub fn open_at(root: PathBuf) -> Result<Self> { let key = library_key(&root); Self::open_at_as(root, &key) }
 
-    /// `open_at`, writing as device `me` (tests play several devices).
-    pub(crate) fn open_as(root: PathBuf, me: Device) -> Result<Self> {
+    /// `open_at` for 工作区 root `key`: what this computer keeps about it
+    /// (最近打开, parse cache, recovery copies) is named by the key, which
+    /// stays when the folder is renamed. What builds before it kept by path
+    /// is taken over the first time (`adopt_path_data`).
+    pub fn open_at_as(root: PathBuf, key: &str) -> Result<Self> { Self::open_as(root, key, device()) }
+
+    /// `open_at_as`, writing as device `me` (tests play several devices).
+    pub(crate) fn open_as(root: PathBuf, key: &str, me: Device) -> Result<Self> {
         crate::vfs::create_dir_all(&root)?;
+        Self::adopt_path_data(&root, key);
         let mut warnings = vec![];
         let internal = root.join(INTERNAL);
         let marker = internal.join("format.json");
@@ -1217,7 +1239,7 @@ impl Store {
         let trash = load_json(&base.join("trash").join("index.json"), "回收站索引", &mut warnings);
         let v5 = !flat && Self::format_at(&root) >= 5;
         let mut store = Store { file_changes: vec![], root, index: HashMap::new(), foreign: DiskIndex::new(), trash, flat, warnings, migrated: None, loaded: Default::default(), copied: Default::default(), parsed: HashMap::new(), batch: Default::default(), view: Default::default(),
-            v5, me, clock: Default::default(), seen: Default::default(), merged: Default::default() };
+            v5, me, clock: Default::default(), seen: Default::default(), merged: Default::default(), key: key.to_string() };
         if flat {
             store.index = load_json(&base.join("index.json"), "文档索引", &mut store.warnings);
             store.flat_folders()?;
@@ -1291,7 +1313,29 @@ impl Store {
     fn internal(&self) -> PathBuf { if self.flat { self.root.clone() } else { self.root.join(INTERNAL) } }
     fn index_file(&self) -> PathBuf { self.internal().join("index.json") }
     fn trash_index_file(&self) -> PathBuf { self.internal().join("trash").join("index.json") }
-    fn local_file(&self) -> PathBuf { local_file_for(&self.root) }
+    fn local_file(&self) -> PathBuf { local_file_for(&self.root, &self.key) }
+
+    /// The name this computer's data about the library goes by.
+    pub fn key(&self) -> &str { &self.key }
+
+    /// This computer's data about `root` named by its path (builds before
+    /// root keys) goes by `key` from now on, unless `key` has some already.
+    /// 最近打开 is copied, so an older build still finds it; recovery copies
+    /// move (they would come back twice), and so does the parse cache.
+    fn adopt_path_data(root: &Path, key: &str) {
+        let old = library_key(root);
+        if old == key { return }
+        let (from, to) = (local_file_for(root, &old), local_file_for(root, key));
+        if from.fs_is_file() && !to.fs_exists() { let _ = crate::vfs::copy(&from, &to); }
+        for (from, to) in [(parsed_cache_path(root, &old), parsed_cache_path(root, key)), (recovery_dir_for(&old), recovery_dir_for(key))] {
+            if from.fs_exists() && !to.fs_exists() { let _ = crate::vfs::rename(&from, &to); }
+        }
+    }
+
+    /// The folder was renamed or moved (工作区 重命名): the same library at
+    /// `root` now. Ids, the key and what is in memory stay; call between
+    /// writes, after `flush_view_state`.
+    pub fn moved_to(&mut self, root: PathBuf) { self.root = root; }
 
     /// A relative path in the library as a path on disk.
     fn abs(&self, rel: &str) -> PathBuf {
@@ -1370,10 +1414,7 @@ impl Store {
         write_atomic(&path, &bytes)
     }
 
-    fn recovery_dir(&self) -> PathBuf {
-        dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir)
-            .join("quiet-md/recovery").join(library_key(&self.root))
-    }
+    fn recovery_dir(&self) -> PathBuf { recovery_dir_for(&self.key) }
 
     pub fn recover_later(&self, doc: &Document) -> Result<()> {
         let dir = self.recovery_dir();
@@ -1947,7 +1988,7 @@ impl Store {
 
     /// What `list` parsed last launch, for the files still where they were.
     fn load_parsed(&mut self) {
-        let Some(c) = crate::vfs::read(parsed_cache_path(&self.root)).ok().and_then(|b| serde_json::from_slice::<ParsedCache>(&b).ok()) else { return };
+        let Some(c) = crate::vfs::read(parsed_cache_path(&self.root, &self.key)).ok().and_then(|b| serde_json::from_slice::<ParsedCache>(&b).ok()) else { return };
         if c.version != parsed_cache_version() { return }
         let mut docs = c.docs;
         let ids: Vec<String> = self.index.iter().filter(|(_, m)| m.folder.is_none()).map(|(k, _)| k.clone()).collect();
@@ -1965,7 +2006,7 @@ impl Store {
             reminders: p.reminders.iter().map(|r| (r.expire, r.notify, r.should_notify, r.whole_day)).collect(),
             links: p.links.iter().map(|l| (l.target.clone(), l.block, l.line.clone())).collect(),
         })).collect();
-        let path = parsed_cache_path(&self.root);
+        let path = parsed_cache_path(&self.root, &self.key);
         if let Some(dir) = path.parent() { crate::vfs::create_dir_all(dir)?; }
         write_cache(&path, &serde_json::to_vec(&ParsedCache { version: parsed_cache_version(), docs })?)
     }
@@ -2928,7 +2969,7 @@ mod tests {
     impl Drop for Lib {
         fn drop(&mut self) {
             let _ = crate::vfs::remove_dir_all(&self.0);
-            let _ = crate::vfs::remove_file(super::parsed_cache_path(&self.0));
+            let _ = crate::vfs::remove_file(super::parsed_cache_path(&self.0, &library_key(&self.0)));
         }
     }
 
@@ -3462,7 +3503,7 @@ mod tests {
         assert!(s.list().iter().any(|e| e.title == "缓存"));
         drop(s);
         // … and drops a cache written by another version.
-        let path = parsed_cache_path(&lib.0);
+        let path = parsed_cache_path(&lib.0, &library_key(&lib.0));
         let mut c: ParsedCache = serde_json::from_slice(&crate::vfs::read(&path).unwrap()).unwrap();
         c.version = "0.0.0-0".into();
         crate::vfs::write(&path, serde_json::to_vec(&c).unwrap()).unwrap();
@@ -3553,14 +3594,14 @@ mod tests {
     #[test]
     fn devices_merge_field_by_field() {
         let lib = Lib::new("devices");
-        let mut a = Store::open_as(lib.0.clone(), dev("aaaa")).unwrap();
+        let mut a = Store::open_as(lib.0.clone(), &library_key(&lib.0), dev("aaaa")).unwrap();
         let x = a.create_from(&doc("共享")).unwrap();
-        let mut b = Store::open_as(lib.0.clone(), dev("bbbb")).unwrap();
+        let mut b = Store::open_as(lib.0.clone(), &library_key(&lib.0), dev("bbbb")).unwrap();
         assert!(b.list().iter().any(|e| e.id == x));
         // Different fields of one document: both stay.
         a.set_pinned(&x, true).unwrap();
         b.set_starred(&x, true).unwrap();
-        let mut c = Store::open_as(lib.0.clone(), dev("cccc")).unwrap();
+        let mut c = Store::open_as(lib.0.clone(), &library_key(&lib.0), dev("cccc")).unwrap();
         let m = c.list().into_iter().find(|e| e.id == x).unwrap().meta;
         assert!(m.pinned && m.starred > 0);
         // One field: the later write wins, and the earlier device's file drops it on its next write.
@@ -3590,10 +3631,10 @@ mod tests {
     #[test]
     fn devices_agree_on_files_found_and_wait_for_files_on_their_way() {
         let lib = Lib::new("found");
-        let mut a = Store::open_as(lib.0.clone(), dev("aaaa")).unwrap();
+        let mut a = Store::open_as(lib.0.clone(), &library_key(&lib.0), dev("aaaa")).unwrap();
         a.list();
         crate::vfs::write(lib.0.join("外来.md"), "# 外来\n").unwrap();
-        let mut b = Store::open_as(lib.0.clone(), dev("bbbb")).unwrap();
+        let mut b = Store::open_as(lib.0.clone(), &library_key(&lib.0), dev("bbbb")).unwrap();
         let id = |s: &mut Store| s.list().into_iter().find(|e| e.title == "外来").unwrap().id;
         assert_eq!(id(&mut a), id(&mut b));
         // Another device's entry for a file not synced here yet keeps its settings.
@@ -3824,7 +3865,7 @@ mod tests {
         let index = crate::vfs::read(trash.join("index.json")).unwrap();
         crate::vfs::rename(&trash, lib.0.join(".quiet/trash-away")).unwrap();
         crate::vfs::write(&trash, b"").unwrap();
-        let mut s = Store { file_changes: vec![], root: lib.0.clone(), index: HashMap::new(), foreign: DiskIndex::new(), flat: false, migrated: None, trash: serde_json::from_slice(&index).unwrap(), warnings: vec![], loaded: Default::default(), copied: Default::default(), parsed: HashMap::new(), batch: Default::default(), view: Default::default(), v5: false, me: device(), clock: Default::default(), seen: Default::default(), merged: Default::default() };
+        let mut s = Store { file_changes: vec![], root: lib.0.clone(), index: HashMap::new(), foreign: DiskIndex::new(), flat: false, migrated: None, trash: serde_json::from_slice(&index).unwrap(), warnings: vec![], loaded: Default::default(), copied: Default::default(), parsed: HashMap::new(), batch: Default::default(), view: Default::default(), v5: false, me: device(), clock: Default::default(), seen: Default::default(), merged: Default::default(), key: library_key(&lib.0) };
         assert_eq!(s.list_trash().len(), 1);
         assert_eq!(s.trash.len(), 1);
     }

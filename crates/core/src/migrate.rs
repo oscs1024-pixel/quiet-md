@@ -475,7 +475,7 @@ fn migrate(root: &Path, format: u32, plan: &mut Plan, warnings: &mut Vec<String>
     for (id, rel, meta, _) in &written { disk.insert(rel.clone(), Attached::of(id, meta)); }
     write_atomic(&internal.join("index.json"), &serde_json::to_vec_pretty(&disk)?)?;
     // This computer's: recently opened, 本机文件, window sizes.
-    let local_path = local_file_for(root);
+    let local_path = local_file_for(root, &library_key(root));
     let mut local: Local = reread(&local_path).unwrap_or_default();
     local.opened = index.iter().filter(|(_, m)| m.opened > 0).map(|(k, m)| (k.clone(), m.opened)).collect();
     local.files = index.iter().filter(|(_, m)| m.local()).map(|(k, m)| (k.clone(), m.clone())).collect();

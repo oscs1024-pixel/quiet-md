@@ -153,6 +153,10 @@ pub struct Preferences {
     pub recent_doc_fonts: Vec<String>,
     #[serde(default)]
     pub recent_ui_fonts: Vec<String>,
+    /// 文档库 › 快速笔记保存到: the 工作区 root key quick notes go to; empty,
+    /// or a root that is gone, is the first open root (2.8).
+    #[serde(default)]
+    pub quick_note_root: String,
 }
 
 /// A week between asks to move the library to real folders.
@@ -191,7 +195,7 @@ fn system_lang() -> Lang {
 impl Default for Preferences {
     fn default() -> Self {
         let lang = system_lang();
-        Preferences { theme: String::new(), feishu: true, english: lang != Lang::Zh, language: lang.code().into(), remote_images: true, quick_hotkey: true, auto_update: true, appearance: String::new(), seen_version: String::new(), motion: String::new(), new_default: String::new(), last_new: String::new(), search_engine: String::new(), start_home: false, browser: String::new(), opaque_window: false, ui_font: String::new(), ui_family: String::new(), doc_family: String::new(), doc_size: String::new(), migrate_later: 0, find_regex: false, backspace_to_title: true, cjk_spacing: false, font_favorites: vec![], recent_doc_fonts: vec![], recent_ui_fonts: vec![] }
+        Preferences { theme: String::new(), feishu: true, english: lang != Lang::Zh, language: lang.code().into(), remote_images: true, quick_hotkey: true, auto_update: true, appearance: String::new(), seen_version: String::new(), motion: String::new(), new_default: String::new(), last_new: String::new(), search_engine: String::new(), start_home: false, browser: String::new(), opaque_window: false, ui_font: String::new(), ui_family: String::new(), doc_family: String::new(), doc_size: String::new(), migrate_later: 0, find_regex: false, backspace_to_title: true, cjk_spacing: false, font_favorites: vec![], recent_doc_fonts: vec![], recent_ui_fonts: vec![], quick_note_root: String::new() }
     }
 }
 
@@ -522,7 +526,7 @@ const THEME_CSS: bool = false;
 /// is picked and which is highlighted, and what picking one does.
 pub struct PrefMenu {
     id: &'static str,
-    labels: Vec<&'static str>,
+    labels: Vec<SharedString>,
     selected: usize,
     focused: usize,
     on: std::rc::Rc<dyn Fn(&mut Workspace, usize, &mut Context<Workspace>)>,
@@ -990,11 +994,12 @@ impl Workspace {
     }
 
     /// A choice as a dropdown button, like 界面语言's: the picked label, a menu of the rest.
-    fn select(&self, id: &'static str, labels: Vec<&'static str>, selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + 'static, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn select<L: Into<SharedString>>(&self, id: &'static str, labels: Vec<L>, selected: usize, on: impl Fn(&mut Workspace, usize, &mut Context<Workspace>) + 'static, cx: &mut Context<Self>) -> Stateful<Div> {
+        let labels: Vec<SharedString> = labels.into_iter().map(Into::into).collect();
         let open = self.pref_menu.as_ref().is_some_and(|m| m.id == id);
         let anchors = self.pref_anchors.clone();
         let on: std::rc::Rc<dyn Fn(&mut Workspace, usize, &mut Context<Workspace>)> = std::rc::Rc::new(on);
-        popup_button(id, labels.get(selected).copied().unwrap_or_default(), open)
+        popup_button(id, labels.get(selected).cloned().unwrap_or_default(), open)
             .child(canvas(move |b, _, _| { anchors.borrow_mut().insert(id, b); }, |_, _, _, _| {}).absolute().inset_0())
             .relative()
             .on_click(cx.listener(move |w, _, _, cx| {
@@ -1006,13 +1011,13 @@ impl Workspace {
 
     pub(crate) fn render_pref_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let m = self.pref_menu.as_ref()?;
-        if self.view != View::Settings || self.settings_page != Page::General { return None }
+        if self.view != View::Settings || !matches!(self.settings_page, Page::General | Page::Library) { return None }
         let b = *self.pref_anchors.borrow().get(m.id)?;
         let rows = m.labels.iter().enumerate().map(|(i, label)| {
             let g = SharedString::from(format!("{}-opt-{i}", m.id));
             ui::menu_row(g.clone(), g.clone())
                 .when(i == m.focused, |d| d.bg(Theme::fill_hover()))
-                .child(div().flex_1().min_w_0().overflow_hidden().child(ui::menu_label(*label, g.clone(), gpui::white())))
+                .child(div().flex_1().min_w_0().overflow_hidden().child(ui::menu_label(label.clone(), g.clone(), gpui::white())))
                 .child(div().flex_none().w(px(14.)).when(i == m.selected, |d| d.child(ui::menu_glyph("check", 14., g.clone()))))
                 .on_hover(cx.listener(move |w, hovered: &bool, _, cx| if *hovered && let Some(m) = &mut w.pref_menu && m.focused != i { m.focused = i; cx.notify(); }))
                 .on_click(cx.listener(move |w, _, _, cx| w.pick_pref(i, cx)))
@@ -1693,6 +1698,14 @@ impl Workspace {
                 // A test run's one root (`QUIET_MD_HOME`) is fixed.
                 .when(std::env::var_os("QUIET_MD_HOME").is_none() || std::env::var_os("QUIET_MD_ROOTS").is_some(), |d| d.child(button(SharedString::from(format!("remove-{key}")), tr("移除", "Remove")).on_click(cx.listener(move |w, _, _, cx| { w.confirm = Some(crate::app::Confirm::RemoveRoot(k.clone(), n.clone())); cx.notify(); }))))).into_any_element()
         }).collect();
+        // 快速笔记保存到 (2.8): a choice once there is one to make.
+        let open: Vec<(String, String)> = self.store.roots().into_iter().filter(|r| r.3.is_none()).map(|r| (r.0, r.1)).collect();
+        if open.len() > 1 {
+            let at = self.store.quick_note_root().and_then(|k| open.iter().position(|r| r.0 == k)).unwrap_or(0);
+            let keys: Vec<String> = open.iter().map(|r| r.0.clone()).collect();
+            folders.push(row(tr("快速笔记保存到", "Quick notes go to"), desc(tr("「新建笔记窗口」和全局快捷键记下的笔记放在这个文件夹里。", "Notes from New Note Window and the global shortcut are saved in this folder.")),
+                self.select("quick-note-root", open.into_iter().map(|r| r.1).collect(), at, move |w, i, cx| { let k = keys[i].clone(); w.set_pref(|p| p.quick_note_root = k, cx) }, cx)).into_any_element());
+        }
         folders.push(row(tr("添加文件夹", "Add a folder"), Some(tr("打开电脑上已有的文件夹，或新建一个，都会显示在侧栏里。", "Open a folder already on your computer, or make a new one; either shows in the sidebar.").into()), div().flex_none().flex().gap(px(8.))
             .child(button("open-root", tr("打开…", "Open…")).on_click(cx.listener(|w, _, window, cx| w.open_folder_dialog(window, cx))))
             .child(button("new-root", tr("新建…", "New…")).on_click(cx.listener(|w, _, window, cx| w.new_root_dialog(window, cx))))).into_any_element());

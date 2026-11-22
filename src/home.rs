@@ -779,6 +779,10 @@ impl Workspace {
             .child(self.view_switch(cx).ml(px(16.))
             ) };
 
+        // No root folder open (2.8): nothing to list or sort, a way to open one.
+        if self.store.roots().is_empty() {
+            return div().flex_1().min_w_0().h_full().flex().flex_col().child(header).child(self.empty_main(cx)).into_any_element();
+        }
         let entries = self.home_entries();
         let body = if entries.is_empty() && (self.home.grid || self.home.tab == HomeTab::Recent) {
             empty_state("illus/empty-list.svg", crate::settings::text("当前列表暂无内容")).into_any_element()
