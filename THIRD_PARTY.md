@@ -4,7 +4,7 @@ Quiet.md is distributed under the [MIT license](LICENSE). The following third-pa
 
 ## Rust dependencies
 
-This table lists 767 packages from `cargo metadata` and their declared licenses, including MPL-2.0. Consult each component's license text for its terms.
+This table lists 770 packages from `cargo metadata` and their declared licenses, including MPL-2.0. Consult each component's license text for its terms.
 
 Run `scripts/licences.sh` to regenerate the table from the full dependency list.
 
@@ -460,6 +460,9 @@ GPUI and its Zed dependencies (the `gpui*`, `collections`, `refineable`, `derive
 | rgb | 0.8.53 | MIT |
 | roxmltree | 0.20.0 | MIT OR Apache-2.0 |
 | roxmltree | 0.21.2 | MIT OR Apache-2.0 |
+| rquickjs | 0.14.0 | MIT |
+| rquickjs-core | 0.14.0 | MIT |
+| rquickjs-sys | 0.14.0 | MIT |
 | rsqlite-vfs | 0.2.0 | MIT |
 | rusqlite | 0.43.0 | MIT |
 | rustc-demangle | 0.1.28 | MIT/Apache-2.0 |

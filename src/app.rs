@@ -524,7 +524,7 @@ impl Workspace {
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     if let Some(id) = &this.current { crate::quick_note::used(id, cx); }
-                    if !this.store.file_task_busy() { this.entries = this.store.list(); this.sort(); this.refresh_markdown(Some(window.window_handle().window_id()), cx); }
+                    if !this.store.file_task_busy() { this.entries = this.store.list(); this.sort(); this.refresh_external(Some(window.window_handle().window_id()), cx); }
                     crate::update::check_if_stale(cx); cx.notify();
                 }
                 else if !this.store.file_task_busy() { this.cancel_home_drag(cx); this.end_folder_drag(true, cx); this.cancel_shortcut_recording(cx); this.flush(cx); }
@@ -568,7 +568,9 @@ impl Workspace {
         // A file written into the library from outside (a model writing a
         // note, say) joins it without going away and back: the library's
         // shape is compared every couple of seconds and the list re-read only
-        // when it changed. Every root folder is watched the same way.
+        // when it changed. Every root folder is watched the same way, and so is
+        // the open document: a clean editor takes in what another program (the
+        // `quiet` CLI, say) wrote to it.
         cx.spawn(async move |this, cx| {
             let bg = cx.background_executor().clone();
             let shape = |dirs: Vec<std::path::PathBuf>| bg.spawn(async move { dirs.iter().map(|d| crate::store::Store::shape_at(d)).collect::<Vec<u64>>() });
@@ -579,7 +581,7 @@ impl Workspace {
                 bg.timer(Duration::from_secs(2)).await;
                 let now = shape(dirs(cx)).await;
                 let Ok(path) = this.update(cx, |w, _| w.current.as_ref()
-                    .filter(|id| !w.store.file_task_busy() && w.store.is_markdown(id))
+                    .filter(|id| !w.store.file_task_busy() && w.store.kind(id) == crate::store::DocKind::Doc)
                     .and_then(|id| w.store.file_path(id))) else { break };
                 let file = bg.spawn(async move {
                     let path = path?;
@@ -587,7 +589,7 @@ impl Workspace {
                     Some((path, meta.modified().ok()?, meta.len()))
                 }).await;
                 if file != last_file {
-                    let _ = this.update(cx, |w, cx| w.refresh_markdown(None, cx));
+                    let _ = this.update(cx, |w, cx| w.refresh_external(None, cx));
                     last_file = file;
                 }
                 if now == last { continue }
@@ -1290,10 +1292,10 @@ impl Workspace {
     }
 
     /// `on_stack`: the window being updated, if any (it can't be read now; it is this one).
-    fn refresh_markdown(&mut self, on_stack: Option<gpui::WindowId>, cx: &mut Context<Self>) {
+    fn refresh_external(&mut self, on_stack: Option<gpui::WindowId>, cx: &mut Context<Self>) {
         if self.preview.is_some() || self.store.file_task_busy() || matches!(self.confirm, Some(Confirm::SaveFailed)) { return }
         let Some(id) = self.current.clone() else { return };
-        if !self.store.is_markdown(&id) { return }
+        if self.store.kind(&id) != crate::store::DocKind::Doc { return }
         if self.unsaved {
             self.flush(cx);
             return
@@ -1302,14 +1304,14 @@ impl Workspace {
         if cx.windows().into_iter().filter(|h| Some(h.window_id()) != on_stack).filter_map(|h| h.downcast::<Workspace>()?.entity(cx).ok())
             .filter(|p| p.entity_id() != cx.entity_id())
             .any(|p| { let w = p.read(cx); w.current.as_ref() == Some(&id) && w.unsaved }) { return }
-        if let Ok(Some(doc)) = self.store.with(Some(&id), |s| s.refresh_markdown(&id)) {
-            self.adopt_markdown(&id, doc, cx);
+        if let Ok(Some(doc)) = self.store.with(Some(&id), |s| s.refresh_external(&id)) {
+            self.adopt_external(&id, doc, cx);
         }
     }
 
     /// All live views share the store's save baseline, so install the accepted
     /// revision in each of them before a sibling's pending autosave can run.
-    fn adopt_markdown(&mut self, id: &str, doc: crate::model::Document, cx: &mut Context<Self>) {
+    fn adopt_external(&mut self, id: &str, doc: crate::model::Document, cx: &mut Context<Self>) {
         let core = crate::editor::core::Core::new(doc);
         let install = |w: &mut Self, cx: &mut Context<Self>| {
             if let Some(p) = &mut w.preview { p.core = core.clone(); }
@@ -1445,7 +1447,7 @@ impl Workspace {
             let Some(id) = self.current.clone() else { return };
             match self.store.load_for_edit(&id, false) {
                 Ok(doc) => {
-                    if self.store.is_markdown(&id) { self.adopt_markdown(&id, doc, cx); }
+                    if self.store.is_markdown(&id) { self.adopt_external(&id, doc, cx); }
                     else {
                         if let Some(ed) = &self.editor {
                             ed.update(cx, |e, cx| e.receive_document(&crate::editor::core::Core::new(doc), cx));

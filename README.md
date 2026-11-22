@@ -79,6 +79,12 @@ Home shows each folder as a stack of its pages. Hold a note over a folder and it
 
 On first launch, Quiet.md looks for your Obsidian, Logseq, iA Writer and Typora libraries and copies them in, leaving the originals alone. Obsidian `[[wikilinks]]` keep working: click one to open the note it points to. Later, drag Markdown files and folders onto Home or straight into a sidebar folder. Notes go out again as Markdown or PDF, or straight to the printer.
 
+### Work with agents
+
+The `quiet` command line tool lets an AI agent (Claude Code, Codex, or any MCP client) read, search and edit the same library you write in. It finds blocks by outline, edits through the same engine as the app, rewrites links when notes move, adds rows to data tables and draws on boards, and refuses to overwrite what you changed since it read. A note you have open takes in the agent's edit as it lands, every save keeps the previous text as a version, and `quiet run` takes a whole JavaScript script as one change that is written in full or not at all. `quiet skill install` gives Claude Code and Codex a skill, so they reach for `quiet` whenever you ask about your notes; clients without a shell use `quiet mcp`.
+
+`quiet` ships inside the app. On macOS, put it on your PATH with `ln -s /Applications/quiet.md.app/Contents/MacOS/quiet /usr/local/bin/quiet`; on Windows it sits beside `quiet_md.exe` in the install folder. See [docs/design/CLI.md](docs/design/CLI.md).
+
 ### And more
 
 - **Version history**: every note keeps snapshots as it saves (20 by default, up to 30). Open one to see what changed in place, restore it in one click, or give it a name.

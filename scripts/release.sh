@@ -23,12 +23,15 @@ if [ -n "${MACOS_TARGET:-}" ]; then
 else
   cargo build --profile dist --locked
 fi
+# The `quiet` command line tool (crates/cli), shipped inside the app.
+cli="$(dirname "$binary")/quiet"
 lipo "$binary" -verify_arch "$arch"
+lipo "$cli" -verify_arch "$arch"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 out=$(mktemp -d "$PWD/dist-release.XXXXXX")
 app="$out/quiet.md.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$binary" "$app/Contents/MacOS/"
+cp "$binary" "$cli" "$app/Contents/MacOS/"
 # Kept beside the package, not in it: resolves the addresses a panic logs
 # (`atos -o <dSYM> -l <base> <addresses>`) and crash reports, matched by UUID.
 ditto -c -k --norsrc --noextattr --noqtn --keepParent "$binary.dSYM/" "$out/dSYM-quiet-md-$version-macos-$arch.zip"
@@ -71,9 +74,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 plutil -lint "$app/Contents/Info.plist"
+# The nested tool first: notarization wants every executable signed.
 if [ "$SIGNING_IDENTITY" = - ]; then
+  codesign --force --sign - "$app/Contents/MacOS/quiet"
   codesign --force --sign - "$app"
 else
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$app/Contents/MacOS/quiet"
   codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$app"
 fi
 codesign --verify --deep --strict --verbose=2 "$app"

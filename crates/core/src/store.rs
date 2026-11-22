@@ -1184,10 +1184,17 @@ impl Store {
     /// FORMAT 4 becomes 5 on opening unless it is in a synced folder, where
     /// another computer may still run a build that cannot read 5 (sync.md 3.3):
     /// it stays 4 until the user agrees.
-    pub fn open_at(root: PathBuf) -> Result<Self> { Self::open_as(root, device()) }
+    pub fn open_at(root: PathBuf) -> Result<Self> { Self::open_with(root, device(), true) }
+
+    /// `open_at` for tools beside the app (the `quiet` CLI): copies left by
+    /// a crash stay for the app to restore and report.
+    pub fn open_for_tools(root: PathBuf) -> Result<Self> { Self::open_with(root, device(), false) }
 
     /// `open_at`, writing as device `me` (tests play several devices).
-    pub(crate) fn open_as(root: PathBuf, me: Device) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn open_as(root: PathBuf, me: Device) -> Result<Self> { Self::open_with(root, me, true) }
+
+    fn open_with(root: PathBuf, me: Device, recover: bool) -> Result<Self> {
         crate::vfs::create_dir_all(&root)?;
         let mut warnings = vec![];
         let internal = root.join(INTERNAL);
@@ -1233,7 +1240,7 @@ impl Store {
             store.foreign = foreign_of(&disk);
             store.load_parsed();
         }
-        if let Ok(entries) = crate::vfs::read_dir(store.recovery_dir()) {
+        if recover && let Ok(entries) = crate::vfs::read_dir(store.recovery_dir()) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().is_none_or(|x| x != "xml") { continue; }
@@ -1996,9 +2003,11 @@ impl Store {
         Ok(doc)
     }
 
-    /// Accept an external revision only when the caller has a clean editor.
-    pub fn refresh_markdown(&self, id: &str) -> Result<Option<Document>> {
-        if !self.is_markdown(id) { return Ok(None) }
+    /// Accept an external revision (another program, the `quiet` CLI) only
+    /// when the caller has a clean editor. Documents only: boards and 数据表
+    /// follow their files their own way.
+    pub fn refresh_external(&self, id: &str) -> Result<Option<Document>> {
+        if self.kind(id) != DocKind::Doc { return Ok(None) }
         let disk = self.read_doc_text(id)?;
         if self.loaded.borrow().get(id).is_none_or(|base| base == &disk) { return Ok(None) }
         let doc = self.parse_doc(id, &disk)?;
@@ -3257,11 +3266,31 @@ mod tests {
         crate::vfs::write(&file, "from another app\n").unwrap();
         s.save_editor(&id, &editor).unwrap();
         assert_eq!(crate::vfs::read_to_string(&file).unwrap(), "from the editor\n");
-        assert!(s.refresh_markdown(&id).unwrap().is_none());
+        assert!(s.refresh_external(&id).unwrap().is_none());
         crate::vfs::write(&file, "saved after the editor\n").unwrap();
-        let refreshed = s.refresh_markdown(&id).unwrap().unwrap();
+        let refreshed = s.refresh_external(&id).unwrap().unwrap();
         assert_eq!(refreshed.blocks[0].text.text, "saved after the editor");
-        assert!(s.refresh_markdown(&id).unwrap().is_none());
+        assert!(s.refresh_external(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_clean_editor_takes_in_another_programs_save() {
+        let lib = Lib::new("xml-external-save");
+        let mut s = lib.open();
+        let id = s.create_from(&Document { title: crate::model::RichText::plain("Plan"), blocks: vec![crate::model::Block::text("first")], ..Default::default() }).unwrap();
+        s.load_for_edit(&id, false).unwrap();
+        assert!(s.refresh_external(&id).unwrap().is_none());
+        // `quiet` (another Store on the same folder) saves the document.
+        let mut cli = Store::open_for_tools(lib.0.clone()).unwrap();
+        cli.list();
+        let mut doc = cli.load(&id).unwrap();
+        doc.blocks.push(crate::model::Block::text("from the CLI"));
+        cli.save(&id, &doc).unwrap();
+        let fresh = s.refresh_external(&id).unwrap().unwrap();
+        assert_eq!(fresh.blocks.last().unwrap().text.text, "from the CLI");
+        assert!(s.refresh_external(&id).unwrap().is_none());
+        // Saving the taken-in version is not a conflict.
+        s.save(&id, &fresh).unwrap();
     }
 
     #[test]

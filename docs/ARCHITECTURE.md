@@ -2,12 +2,13 @@
 
 Quiet.md is a single-process GPUI application with roughly 90,000 lines of Rust, including roughly 26,000 for whiteboards. A document is a tree of blocks in memory (`model.rs`) and a DocxXML file on disk (`docxml.rs`). The editor renders the tree as a virtualized list.
 
-The Cargo workspace contains two crates:
+The Cargo workspace contains three crates:
 
 - **`crates/core` (`fdl_core`, about 36,000 lines, including 20,000 for whiteboards)** contains the document model, DocxXML, editing and undo, the on-disk library, Markdown and HTML import, Markdown export, and whiteboard models and algorithms. It builds and tests independently of GPUI with `cargo test -p fdl_core`. The fuzzer lives here too.
 - **The root crate (`quiet_md`)** owns windows, views, rendering, menus and overlays. `main.rs` re-exports the core modules at the crate root, and `editor/mod.rs` re-exports `editor::core` and `editor::table_ops`. The application can therefore use paths such as `crate::model` and `super::core`.
+- **`crates/cli` (`quiet_cli`, the `quiet` binary)** is the library from the command line, for people and agents. Each command is one operation of `Session` (`session.rs`) with JSON in and out: documents and blocks there, 数据表 rows in `tables.rs`, boards in `boards.rs`, versions, the trash and import in `library.rs`. `quiet run` gives the same operations to a JavaScript script in an embedded QuickJS (`js.rs`, `prelude.js`) with no files or network; `quiet mcp` (`mcp.rs`) serves them as two MCP tools. Changes stay in memory until the command or script ends, then are written in one commit through `Store` (its write lock, versions and link rewriting); a file changed on disk in the meantime stops the commit. Edits go through `editor::Core`, as in the app. Block refs carry a fingerprint of the block (`#3~k7f2`) so a ref from an earlier read finds its block or fails. `src/guide.md` is the agents' guide, printed by `quiet skill`; `help.rs` holds each command's help. See [the CLI design](design/CLI.md).
 
-Dependencies flow from the application to core. Within the workspace, core may reference only core modules.
+Dependencies flow from the application and the CLI to core. Within the workspace, core may reference only core modules.
 
 ```text
 main.rs — window
