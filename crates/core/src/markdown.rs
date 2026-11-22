@@ -61,6 +61,33 @@ pub fn export(doc: &Document, opts: &Options) -> Export {
     Export { text: out, files: w.files, generated: w.generated, missing: w.missing }
 }
 
+/// What of `blocks` a Markdown file can keep, for pasting into one: 高亮块
+/// and 分栏 give way to what they hold; attachments, 画板, 数据表, 倒计时,
+/// 子页面列表 and unknown blocks are left out, and so are inline 提醒,
+/// buttons and file cards.
+pub fn keepable(blocks: Vec<Block>) -> Vec<Block> {
+    let mut out = vec![];
+    for mut b in blocks {
+        match &mut b.kind {
+            BlockKind::Callout { .. } | BlockKind::Grid | BlockKind::Column { .. } => {
+                if !b.text.text.is_empty() { out.push(Block { kind: BlockKind::Text, children: vec![], ..b.clone() }); }
+                out.extend(keepable(b.children));
+                continue;
+            }
+            BlockKind::File(_) | BlockKind::Board(_) | BlockKind::DataTable(_) | BlockKind::Countdown(_) | BlockKind::SubPageList | BlockKind::Raw { .. } => continue,
+            BlockKind::Table(t) => for c in t.rows.iter_mut().flatten() { c.blocks = keepable(std::mem::take(&mut c.blocks)); },
+            _ => {}
+        }
+        let objects: Vec<std::ops::Range<usize>> = b.text.spans()
+            .filter(|(_, m)| m.inline.as_ref().is_some_and(|o| matches!(o.kind, InlineKind::Reminder(_) | InlineKind::Button(_) | InlineKind::File(_))))
+            .map(|(r, _)| r).collect();
+        for r in objects.into_iter().rev() { b.text.replace(r, &RichText::default()); }
+        b.children = keepable(std::mem::take(&mut b.children));
+        out.push(b);
+    }
+    out
+}
+
 /// 复制为 Markdown (#60): `blocks` (and the title, for a whole document) as
 /// Markdown text. Equations stay LaTeX; local images and attachments are
 /// linked by their absolute paths, nothing is copied.
@@ -979,6 +1006,21 @@ mod tests {
         assert_eq!(write_file(&doc, front_matter(src).0, None), src);
         let doc = crate::docxml::parse(&crate::docxml::serialize(&doc)).unwrap();
         assert!(matches!(&doc.blocks[0].kind, BlockKind::Code { lang, show_code: true, .. } if lang == "Mermaid"));
+    }
+
+    /// Pasting into a Markdown file keeps what it can hold and nothing it can't.
+    #[test]
+    fn keepable_leaves_out_what_markdown_drops() {
+        let xml = "<title>T</title>\n<p>交付 <time expire-time=\"1761200000000\" notify-time=\"1761199700000\" should-notify=\"false\">x</time> 前</p>\n<callout emoji=\"💡\">\n  <p>提示</p>\n</callout>\n<grid>\n  <column width-ratio=\"0.5\">\n    <p>左</p>\n  </column>\n  <column width-ratio=\"0.5\">\n    <blockquote>\n      <p>右引</p>\n    </blockquote>\n  </column>\n</grid>\n<countdown duration=\"60000\" start-time=\"0\" notify=\"false\" color=\"blue\" timing=\"false\"/>\n<p>公式 <latex>x^2</latex></p>\n";
+        let doc = crate::docxml::parse(xml).unwrap();
+        assert!(doc.blocks.iter().any(|b| matches!(b.kind, BlockKind::Countdown(_))), "{:?}", doc.blocks);
+        let kept = keepable(doc.blocks);
+        let out = crate::docxml::serialize(&Document { blocks: kept.clone(), ..Default::default() });
+        assert!(!out.contains("<time") && !out.contains("<callout") && !out.contains("<grid") && !out.contains("<countdown"), "{out}");
+        assert!(out.contains("<p>交付  前</p>") && out.contains("<p>提示</p>") && out.contains("<p>左</p>") && out.contains("<blockquote>") && out.contains("<latex>x^2</latex>"), "{out}");
+        // Saved as Markdown and read back, nothing more goes missing.
+        let md = write_file(&Document { blocks: kept.clone(), ..Default::default() }, "", None);
+        assert_eq!(crate::docxml::serialize(&parse_file(&md, "", None)).matches("<p>").count(), out.matches("<p>").count(), "{md}");
     }
 
     #[test]

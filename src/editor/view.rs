@@ -937,6 +937,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Whatever asks (the slash menu lists only these), a Markdown file gets
+        // only blocks it can keep.
+        if self.markdown && !menus::markdown_ok(kind) { return; }
         if let Some(s) = self.slash.take() {
             let end = self.core.sel.head.offset.max(s.start);
             self.core.sel = Selection { anchor: Pos::new(s.block, s.trigger), head: Pos::new(s.block, end) };
@@ -2044,7 +2047,10 @@ impl Editor {
         }
         let head = self.core.sel.head.block;
         let rich_target = head != TITLE && !self.core.is_code(head);
-        let internal = meta.and_then(|xml| docxml::parse(&xml).ok()).filter(|d| !d.blocks.is_empty());
+        // Into a Markdown file only what it can keep (no 高亮块, 分栏, attachments, 提醒 ...).
+        let md = self.markdown;
+        let keep = |b: Vec<Block>| if md { crate::markdown::keepable(b) } else { b };
+        let internal = meta.and_then(|xml| docxml::parse(&xml).ok()).map(|d| keep(d.blocks)).filter(|b| !b.is_empty());
         let html = match &fake {
             Some(f) => f.html.clone(),
             None if !plain && internal.is_none() && rich_target && !text.as_deref().is_some_and(crate::paste::has_math) => {
@@ -2053,7 +2059,7 @@ impl Editor {
             None => None,
         };
         let html = html.filter(|_| !plain && rich_target).map(|h| {
-            let mut b = crate::paste::html_to_blocks(&h);
+            let mut b = keep(crate::paste::html_to_blocks(&h));
             super::image::localize_pasted_images(&mut b);
             b
         });
@@ -2075,8 +2081,8 @@ impl Editor {
             if let Some(s) = text.filter(|s| !s.is_empty()) {
                 self.core.paste_text(&s);
             }
-        } else if let Some(d) = internal {
-            self.core.paste_blocks(d.blocks);
+        } else if let Some(b) = internal {
+            self.core.paste_blocks(b);
         } else if let Some(b) = html.filter(|b| !b.is_empty() && !restates(b) && !(image.is_some() && b.iter().all(|b| matches!(b.kind, BlockKind::Image { .. })))) {
             let remote = super::image::pasted_remote(&b);
             self.core.paste_blocks(b);
