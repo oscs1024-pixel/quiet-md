@@ -147,6 +147,8 @@ pub struct Editor {
     pub probes: RefCell<Vec<(super::overlays::Probe, Option<Bounds<Pixels>>)>>,
     pub marked: Option<(BlockId, Range<usize>)>,
     pub dragging: bool,
+    /// A touch long press selected a word and its drag extends the selection (iOS).
+    pub(super) long_press: bool,
     /// Text drag: the pointer's last position and when the page last scrolled
     /// under it (`text_autoscroll`).
     drag_at: Option<Point<Pixels>>,
@@ -410,6 +412,7 @@ impl Editor {
             probes: RefCell::new(vec![]),
             marked: None,
             dragging: false,
+            long_press: false,
             drag_at: None,
             drag_scrolled: None,
             drag_active: None,
@@ -2466,6 +2469,35 @@ impl Editor {
         self.dragging = ev.click_count == 1;
         self.restart_blink(window, cx);
         cx.notify();
+    }
+
+    /// Touch: a long press selects the word under it (as a double click does)
+    /// and moving the finger extends the selection.
+    pub(super) fn on_long_press(&mut self, ev: &LongPressEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match ev.phase {
+            TouchPhase::Started => {
+                let Some((pos, _)) = self.pos_at(ev.position) else { return };
+                let text = self.core.text_of(pos.block).map(|t| t.text.clone()).unwrap_or_default();
+                if text.is_empty() { return; }
+                window.focus(&self.focus, cx);
+                self.core.clear_block_sel();
+                self.goal_x = None;
+                self.slash = None;
+                self.marked = None;
+                let r = core::word_at(&text, pos.offset);
+                self.set_caret(Pos::new(pos.block, r.start), false);
+                self.core.sel.head = Pos::new(pos.block, r.end);
+                self.toolbar_hidden = false;
+                self.long_press = true;
+                window.prevent_default();
+                cx.stop_propagation();
+                self.restart_blink(window, cx);
+                cx.notify();
+            }
+            TouchPhase::Moved if self.long_press => self.drag_to(ev.position, cx),
+            TouchPhase::Ended | TouchPhase::Cancelled => self.long_press = false,
+            _ => {}
+        }
     }
 
     pub fn drag_to(&mut self, p: Point<Pixels>, cx: &mut Context<Self>) {
