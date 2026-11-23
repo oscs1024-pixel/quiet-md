@@ -761,6 +761,7 @@ pub(super) const STRINGS: &[(&str, &str)] = &[
     ("复制为 Markdown", "Markdown으로 복사"),
     ("复制文件地址", "파일 경로 복사"),
     ("已复制文件地址", "파일 경로를 복사했습니다"),
+    ("已复制图片", "이미지를 복사했습니다"),
     ("拷贝为 Markdown", "Markdown으로 복사"),
     ("已复制为 Markdown", "Markdown으로 복사했습니다"),
     ("更改…", "변경…"),

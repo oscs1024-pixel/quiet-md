@@ -102,8 +102,6 @@ fn hash_block(b: &Block, orders: &rustc_hash::FxHashMap<BlockId, String>, h: &mu
     b.text.text.len().hash(h);
     b.text.runs.len().hash(h);
     b.folded.hash(h);
-    b.grid_gap.hash(h);
-    b.grid_vertical_align.hash(h);
     match &b.kind {
         BlockKind::Heading { level, .. } => (level, orders.get(&b.id)).hash(h),
         BlockKind::Code { wrap, show_code, .. } => (wrap, show_code).hash(h),
@@ -591,12 +589,12 @@ impl R<'_> {
                     MouseButton::Left,
                     cx.listener(move |e, _, window, cx| {
                         cx.stop_propagation();
-                        let selection = (e.core.sel, e.core.block_sel.clone());
+                        let selection = (e.core.sel, e.core.block_sel);
                         e.core.toggle_fold(id);
                         e.core.fix_selection();
                         e.keep_read_only_fold();
                         e.fold_anim = Some((id, web_time::Instant::now()));
-                        if selection == (e.core.sel, e.core.block_sel.clone()) {
+                        if selection == (e.core.sel, e.core.block_sel) {
                             e.changed_preserving_viewport(window, cx);
                         } else {
                             // A caret hidden by the fold was moved to its heading.
@@ -1404,7 +1402,7 @@ impl Editor {
             })
         };
         let (block, target) = match req {
-            Reveal::Caret => match &self.core.block_sel {
+            Reveal::Caret => match self.core.block_sel {
                 Some(b) => (b.head, self.block_bounds.borrow().get(&b.head).copied()),
                 // A selected image has no text layout: keep its box in view.
                 None => {

@@ -154,9 +154,3 @@ Each write uses a unique temporary file in the destination directory. The app sy
 If a save fails during system shutdown, the app stores the document body in `quiet-md/recovery/<library-id>/` in local application data. When the same library next opens, it creates a recovered copy and removes the recovery file after a successful write. This mechanism handles failed shutdown saves separately from version history.
 
 Export checks canonical paths and rejects files outside the library, including symlinks that escape it. HTML reads up to 20 MiB per embedded image. Markdown copies assets up to 256 MiB each and counts missing, rejected or oversized assets in the export warnings. Both inline and block attachments export as links with copied files.
-
-## Grid spacing
-
-Images can be arranged in standard `<grid>` / `<column width-ratio="…">` containers. Image dimensions remain on each `<img>` block. Quiet.md optionally writes `data-quiet-gap="N"` on a grid to preserve a gutter of 0–80 pixels. Missing or invalid values use the existing 20-pixel gutter. This attribute is a Quiet.md extension, and preservation by Lark or older Quiet.md versions is not guaranteed. HTML and PDF export include the gutter. Markdown export flattens columns as before.
-
-Grid content can also use `data-quiet-valign="center"` or `"bottom"`. Missing and unrecognized values align at the top, and top alignment omits the attribute. Alignment applies to all content in each column, including image captions, and is retained by HTML/PDF export. Like custom gutters, this is a Quiet.md extension with no guaranteed Lark round trip.

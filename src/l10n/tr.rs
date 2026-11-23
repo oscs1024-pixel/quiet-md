@@ -1002,6 +1002,7 @@ pub(super) const STRINGS: &[(&str, &str)] = &[
     ("已复制为 Markdown", "Markdown olarak kopyalandı"),
     ("复制文件地址", "Dosya yolunu kopyala"),
     ("已复制文件地址", "Dosya yolu kopyalandı"),
+    ("已复制图片", "Görsel kopyalandı"),
     ("快速搜索", "Hızlı arama"),
     ("未找到字体", "Yazı tipi bulunamadı"),
     ("画板：在文档里插入，或直接打开 .excalidraw 文件", "Çizim tahtaları: bir nota ekleyin veya doğrudan .excalidraw dosyası açın"),

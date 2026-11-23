@@ -1015,6 +1015,7 @@ pub(super) const STRINGS: &[(&str, &str)] = &[
     ("已复制为 Markdown", "Copié en Markdown"),
     ("复制文件地址", "Copier le chemin du fichier"),
     ("已复制文件地址", "Chemin du fichier copié"),
+    ("已复制图片", "Image copiée"),
     ("快速搜索", "Recherche rapide"),
     ("未找到字体", "Aucune police trouvée"),
     ("画板：在文档里插入，或直接打开 .excalidraw 文件", "Tableaux : ajoutez-en un dans une note, ou ouvrez un fichier .excalidraw"),

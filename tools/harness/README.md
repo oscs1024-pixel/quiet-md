@@ -84,7 +84,3 @@ The harness runs on a computer someone may be using.
 - Do not click links, Web Search or link-opening buttons that launch a browser. Avoid Print (system print panel), Quick Look and `qlmanage -p`.
 - Do not use the `open` command. Use `pick a|b` when a script needs to select files.
 - Never use the real user library as `lib_dir`. If its contents are essential, make a read-only copy and keep user content out of committed artifacts.
-
-`shift-click x y` and `cmd-click x y` send modifier-aware clicks. After `clip text <file>` enables the isolated pasteboard, `key cmd-c` and `key cmd-x` capture internal XML there, so a subsequent `key cmd-v` can test copy/paste without touching the system clipboard.
-
-`python3 tools/harness/column_text_selection.py` checks that dragging across column text replaces the selected words without adding a paragraph. It covers top, center and bottom alignment using isolated libraries.

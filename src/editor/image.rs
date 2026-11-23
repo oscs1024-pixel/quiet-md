@@ -35,8 +35,6 @@ const BAD_DIMS: &str = "识别图片宽高失败";
 const TOO_BIG: &str = "上传图片大小不能超过 20 MB";
 const FULL: [f32; 4] = [0., 0., 1., 1.];
 const FADE: f32 = 0.2;
-/// Keep viewer controls visible until interaction has stopped for three seconds.
-const CHROME_IDLE: Duration = Duration::from_secs(3);
 /// Media in the page stays crisp: image corners round at 5 (an image
 /// shown cropped keeps square corners — GPUI can only round a whole image).
 const RADIUS: f32 = 5.;
@@ -878,20 +876,6 @@ impl R<'_> {
                 .absolute()
                 .inset_0()
         });
-        // A separate zoom target keeps selecting and resizing an image predictable.
-        let zoom = (active && hovered && ok && !cropping && !self.ghost).then(|| {
-            div().id(("image-zoom", id.0)).absolute().top(px(8.)).right(px(8.))
-                .size(px(28.)).rounded(px(5.)).bg(Theme::bg_body()).shadow(theme::shadow_menu())
-                .flex().items_center().justify_center().cursor_pointer()
-                .child(icon("zoom-in", 18., Theme::icon()))
-                .tip_above(crate::settings::text("放大"), None)
-                .on_mouse_down(MouseButton::Left, cx.listener(move |e, _, window, cx| {
-                    cx.stop_propagation();
-                    window.prevent_default();
-                    e.open_lightbox(id, window, cx);
-                }))
-        });
-        let draggable = !ed.read_only && !self.ghost;
         let image_box = div()
             .id(("image-box", id.0))
             .relative()
@@ -904,27 +888,14 @@ impl R<'_> {
             .when_some(handles, |d, hs| d.children(hs))
             .children(overlay)
             .children(recorder)
-            .children(zoom)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |e, ev: &MouseDownEvent, window, cx| {
-                    if e.img.crop.is_none() {
+                    // A click on the selected image opens the viewer.
+                    if ev.click_count == 1 && !ev.modifiers.shift && e.img.crop.is_none() && e.image_active(id, e.focus.is_focused(window)) {
                         cx.stop_propagation();
                         window.prevent_default();
-                        window.focus(&e.focus, cx);
-                        if ev.modifiers.platform {
-                            e.core.toggle_image_selection(id);
-                        } else if !draggable || !e.core.block_sel_ids().contains(&id) {
-                            e.core.clear_block_sel();
-                            e.core.cell_sel = None;
-                            e.core.sel = Selection::caret(Pos::new(id, 0));
-                        }
-                        e.menu = None;
-                        // Reuse the block drag threshold, drop targets and undo transaction.
-                        if draggable && !ev.modifiers.platform {
-                            e.press_handle(id, ev.position);
-                        }
-                        cx.notify();
+                        e.open_lightbox(id, window, cx);
                     }
                 }),
             );
@@ -1385,7 +1356,7 @@ impl Editor {
 
     // ---- toolbar
 
-    /// Crop, caption, alignment and copy actions above the selected image.
+    /// 裁剪 · 重置图片 | 添加描述 | 左 · 中 · 右 | 复制 above the selected image.
     pub(super) fn image_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let focused = self.focus.is_focused(window);
         let id = match &self.img.crop {
@@ -1523,16 +1494,10 @@ impl Editor {
         if !cropping {
             bar = bar.child(sep()).child(
                 btn("itb-copy")
-                    .tip_above(crate::settings::text("复制"), Some("⌘C"))
+                    .tip_above(crate::settings::text("复制"), None)
                     .child(icon("copy", 18., Theme::icon()))
-                    .on_mouse_down(MouseButton::Left, act(|e, id, window, cx| {
-                        window.focus(&e.focus, cx);
-                        e.core.clear_block_sel();
-                        e.core.cell_sel = None;
-                        e.core.sel = Selection::caret(Pos::new(id, 0));
-                        if e.copy_selection(cx) {
-                            e.toast_kind(ToastKind::Success, crate::settings::tr("已复制图片", "Image copied"), cx);
-                        }
+                    .on_mouse_down(MouseButton::Left, act(|e, id, _, cx| {
+                        if e.copy_image(id, cx) { e.toast_kind(ToastKind::Success, crate::settings::text("已复制图片"), cx); }
                     })),
             );
             w += 25.;
@@ -1610,7 +1575,7 @@ impl Editor {
             orig: false,
             opened: now,
             closing: None,
-            chrome: true,
+            chrome: false,
             chrome_t: now - Duration::from_secs(1),
             last_move: now,
             press: None,
@@ -1618,7 +1583,6 @@ impl Editor {
             rotated: None,
         });
         window.focus(&self.img.lb_focus, cx);
-        self.lb_show_chrome(cx);
         cx.notify();
     }
 
@@ -1684,7 +1648,6 @@ impl Editor {
     }
 
     fn lb_zoom(&mut self, factor: f32, cx: &mut Context<Self>) {
-        self.lb_show_chrome(cx);
         let Some(lb) = &mut self.img.lightbox else { return };
         let s = clampf(lb.scale * factor, 0.1, 5.);
         let k = s / lb.scale;
@@ -1697,7 +1660,6 @@ impl Editor {
     }
 
     fn lb_go(&mut self, d: isize, cx: &mut Context<Self>) {
-        self.lb_show_chrome(cx);
         let Some(lb) = &mut self.img.lightbox else { return };
         let ix = lb.ix as isize + d;
         if ix < 0 || ix as usize >= lb.ids.len() {
@@ -1711,7 +1673,6 @@ impl Editor {
     }
 
     fn lb_toggle(&mut self, cx: &mut Context<Self>) {
-        self.lb_show_chrome(cx);
         let Some(lb) = &mut self.img.lightbox else { return };
         if lb.orig && (lb.scale - 1.).abs() < 0.01 {
             self.lb_fit();
@@ -1726,7 +1687,6 @@ impl Editor {
     }
 
     fn lb_rotate(&mut self, cx: &mut Context<Self>) {
-        self.lb_show_chrome(cx);
         let Some(lb) = &mut self.img.lightbox else { return };
         lb.rot = (lb.rot + 1) % 4;
         lb.tx = 0.;
@@ -1744,11 +1704,11 @@ impl Editor {
             cx.notify();
         }
         self.img.chrome_task = Some(cx.spawn(async |this, cx| {
-            cx.background_executor().timer(CHROME_IDLE).await;
+            cx.background_executor().timer(Duration::from_secs(5)).await;
             let _ = this.update(cx, |e, cx| {
                 if let Some(lb) = &mut e.img.lightbox
                     && lb.chrome
-                    && lb.last_move.elapsed() >= CHROME_IDLE
+                    && lb.last_move.elapsed() >= Duration::from_millis(4990)
                 {
                     lb.chrome = false;
                     lb.chrome_t = Instant::now();
@@ -2030,7 +1990,6 @@ impl Editor {
             .on_action(cx.listener(|e, _: &LbZoomOut, _, cx| e.lb_zoom(1. / 1.15, cx)))
             .on_action(cx.listener(|e, _: &LbToggle, _, cx| e.lb_toggle(cx)))
             .on_action(cx.listener(|e, _: &LbFit, _, cx| {
-                e.lb_show_chrome(cx);
                 e.lb_fit();
                 if let Some(lb) = &mut e.img.lightbox {
                     lb.orig = false;
@@ -2080,7 +2039,6 @@ impl Editor {
                 }),
             )
             .on_scroll(cx.listener(|e, ev: &ScrollEvent, _, cx| {
-                e.lb_show_chrome(cx);
                 let (dx, dy, lines) = match ev.delta {
                     ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y), false),
                     ScrollDelta::Lines(l) => (l.x, l.y, true),

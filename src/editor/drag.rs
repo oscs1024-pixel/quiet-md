@@ -23,8 +23,6 @@ const FLASH: Duration = Duration::from_millis(2000);
 pub struct BlockDrag {
     /// The moved blocks, topmost only, in document order.
     pub ids: Vec<BlockId>,
-    /// The pressed image becomes the sole selection when the gesture stays a click.
-    pressed: BlockId,
     /// A multi-block selection the press started on (the handle menu narrows
     /// the selection to its block; dragging moves them all).
     sel: Option<BlockSel>,
@@ -198,10 +196,10 @@ impl Editor {
         }
         let multi = self.core.block_sel_ids();
         let (ids, sel) = if multi.len() > 1 && multi.contains(&id) {
-            (multi, self.core.block_sel.clone())
+            (multi, self.core.block_sel)
         } else {
             // A folded heading carries its hidden section.
-            let keep = self.core.block_sel.clone();
+            let keep = self.core.block_sel;
             self.core.select_block(id);
             let ids = self.core.block_sel_ids();
             self.core.block_sel = keep;
@@ -213,7 +211,7 @@ impl Editor {
         let index = super::core::block_index(&self.core.doc);
         let size = ids_union(&w, &index, &ids).map_or(size(px(0.), px(0.)), |b| b.size);
         drop(bb);
-        self.block_drag = Some(BlockDrag { ids, pressed: id, sel, from: at, at, started: false, drop: None, scrolled: None, size, active: None });
+        self.block_drag = Some(BlockDrag { ids, sel, from: at, at, started: false, drop: None, scrolled: None, size, active: None });
     }
 
     pub(super) fn block_drag_move(&mut self, at: Point<Pixels>, pressed: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -228,7 +226,7 @@ impl Editor {
                 return;
             }
             d.started = true;
-            if let Some(sel) = d.sel.clone() {
+            if let Some(sel) = d.sel {
                 self.core.block_sel = Some(sel);
             }
             self.menu = None;
@@ -242,11 +240,6 @@ impl Editor {
     pub(super) fn end_block_drag(&mut self, at: Option<Point<Pixels>>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(d) = self.block_drag.take() else { return };
         if !d.started {
-            if matches!(self.core.kind_of(d.pressed), Some(BlockKind::Image { .. })) {
-                self.core.clear_block_sel();
-                self.core.sel = super::core::Selection::caret(super::core::Pos::new(d.pressed, 0));
-                cx.notify();
-            }
             return;
         }
         self.toolbar_hidden = false;

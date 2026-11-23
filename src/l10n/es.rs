@@ -761,6 +761,7 @@ pub(super) const STRINGS: &[(&str, &str)] = &[
     ("复制为 Markdown", "Copiar como Markdown"),
     ("复制文件地址", "Copiar ruta del archivo"),
     ("已复制文件地址", "Ruta del archivo copiada"),
+    ("已复制图片", "Imagen copiada"),
     ("拷贝为 Markdown", "Copiar como Markdown"),
     ("已复制为 Markdown", "Copiado como Markdown"),
     ("更改…", "Cambiar…"),

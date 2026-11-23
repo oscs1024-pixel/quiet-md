@@ -1996,6 +1996,7 @@ pub(crate) fn localize(text: &str, english: bool) -> &str {
         "下移块" => "Move block down",
         "复制文件地址" => "Copy file path",
         "已复制文件地址" => "File path copied",
+        "已复制图片" => "Image copied",
         "已复制为 Markdown" => "Copied as Markdown",
         "为当前窗口选择合适页宽" => "Choose a page width for this window",
         "默认" => "Default",
