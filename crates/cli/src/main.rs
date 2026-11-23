@@ -302,8 +302,9 @@ fn install_skill(a: &Args) -> R<String> {
             return Err(fail("exists", format!("{} is a skill quiet did not write", skill.display())).hint("move it away, or pass --force to replace it"));
         }
         std::fs::create_dir_all(at.join("references"))?;
-        std::fs::write(&skill, format!("{SKILL}\n{mark}"))?;
-        std::fs::write(at.join("references").join("guide.md"), GUIDE)?;
+        // LF whatever the checkout this was built from: agents read the frontmatter from `---\n`.
+        std::fs::write(&skill, format!("{SKILL}\n{mark}").replace("\r\n", "\n"))?;
+        std::fs::write(at.join("references").join("guide.md"), GUIDE.replace("\r\n", "\n"))?;
         out += &format!("installed {}\n", at.display());
     }
     Ok(out)
