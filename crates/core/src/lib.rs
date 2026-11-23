@@ -15,6 +15,7 @@ pub mod merge;
 pub mod model;
 pub mod palette;
 pub mod paste;
+pub mod remote;
 pub mod spacing;
 pub mod store;
 pub mod table;

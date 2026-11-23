@@ -121,6 +121,7 @@ Whiteboard and history modules in core:
 | Lines and text | `linear`, `binding`, `elbow`, `heading`, `arrow_text`, `text`, `text_wrapping`, `text_measure`, `text_edit`, `list_marker` |
 | Undo and actions | `history` (store, delta, history), `actions.rs` and `actions/` (one function per upstream action) |
 | Output | `display` (shared backend display list), `export_svg` |
+| `remote/` | Git sync without git (docs/design/sync.md §2.1): `SyncRemote` and its GitHub REST client (`github.rs`, HTTP through curl in `curl.rs`, tarballs in `tar.rs`), an in-memory `FakeRemote`, and `engine.rs`, one pull → merge → push of a folder; not wired into the app yet |
 | `versions.rs` | Directory-indexed document snapshots, throttling, quotas and trash integration |
 | `diff.rs` / `changes.rs` | Dependency-free line LCS and block-level LCS for snapshot highlighting |
 | `merge.rs` | Three-way merge of two versions of a document by block, for sync (docs/design/sync.md §3.2); not wired into the app yet |
