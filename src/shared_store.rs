@@ -182,6 +182,8 @@ impl SharedStore {
         out
     }
     pub fn load(&self, id: &str) -> Result<Document> { self.on_res(id, |s| s.load(id)) }
+    /// The file of `id` while it is still only in iCloud (#406).
+    pub fn cloud_only(&self, id: &str) -> Option<std::path::PathBuf> { self.on(id, |s| s.cloud_only(id)).flatten() }
     pub fn load_for_edit(&self, id: &str, shared: bool) -> Result<Document> { self.on_res(id, |s| s.load_for_edit(id, shared)) }
     pub fn forget_loaded(&self, id: &str) { self.on(id, |s| s.forget_loaded(id)); }
     pub fn recover_later(&self, doc: &Document) -> Result<()> { self.put(None, |s, _| s.recover_later(doc)) }

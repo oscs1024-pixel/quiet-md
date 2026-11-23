@@ -144,6 +144,10 @@ pub(super) fn load(root: &Path, me: &str, warnings: &mut Vec<String>) -> Merged 
             let f = load_json(&p, "文档索引", warnings);
             if warnings.len() > n && !p.fs_exists() { let _ = save_json(&p, &f); }
             f
+        } else if hold_dataless(&p) {
+            // Another device's, still only in iCloud: its changes count once it is here.
+            warnings.push(not_downloaded(&format!("{stem}.json")));
+            continue;
         } else {
             match crate::vfs::read(&p).ok().and_then(|b| serde_json::from_slice(&b).ok()) { Some(f) => f, None => continue }
         };

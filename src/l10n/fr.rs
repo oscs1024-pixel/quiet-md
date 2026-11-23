@@ -1121,4 +1121,10 @@ pub(super) const STRINGS: &[(&str, &str)] = &[
     ("部分中文", "Chinois partiel"),
     ("下载后可预览", "Aperçu après téléchargement"),
     ("其他语言和符号（{}）", "Autres écritures et symboles ({})"),
+    ("{}还在 iCloud 上没有下载，这次没有读取", "{} n’est pas encore téléchargé depuis iCloud et n’a pas été lu cette fois"),
+    ("{}还在 iCloud 上没有下载，没有写入，以免覆盖其他设备的内容", "{} n’est pas encore téléchargé depuis iCloud et n’a pas été écrit, pour ne pas écraser les données d’un autre appareil"),
+    ("这篇文档还在从 iCloud 下载，请稍后再打开", "Ce document est encore en cours de téléchargement depuis iCloud. Rouvrez-le dans un instant."),
+    ("正在从 iCloud 下载…", "Téléchargement depuis iCloud…"),
+    ("这篇文档还没有从 iCloud 下载完成", "Ce document n’a pas fini de se télécharger depuis iCloud"),
+    ("无法从 iCloud 下载这篇文档：{}", "Impossible de télécharger ce document depuis iCloud : {}"),
 ];

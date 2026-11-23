@@ -1089,4 +1089,10 @@ pub(super) const STRINGS: &[(&str, &str)] = &[
     ("部分中文", "Kısmi Çince"),
     ("下载后可预览", "İndirdikten sonra önizleme"),
     ("其他语言和符号（{}）", "Diğer yazılar ve simgeler ({})"),
+    ("{}还在 iCloud 上没有下载，这次没有读取", "{} henüz iCloud'dan indirilmedi, bu sefer okunmadı"),
+    ("{}还在 iCloud 上没有下载，没有写入，以免覆盖其他设备的内容", "{} henüz iCloud'dan indirilmedi; başka bir cihazın verilerinin üzerine yazmamak için yazılmadı"),
+    ("这篇文档还在从 iCloud 下载，请稍后再打开", "Bu belge hâlâ iCloud'dan indiriliyor. Birazdan yeniden açın."),
+    ("正在从 iCloud 下载…", "iCloud'dan indiriliyor…"),
+    ("这篇文档还没有从 iCloud 下载完成", "Bu belgenin iCloud'dan indirilmesi henüz tamamlanmadı"),
+    ("无法从 iCloud 下载这篇文档：{}", "Bu belge iCloud'dan indirilemedi: {}"),
 ];

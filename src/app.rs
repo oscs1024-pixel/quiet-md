@@ -376,6 +376,9 @@ pub struct Workspace {
     pub folder_drag: crate::sidebar_drag::SidebarDrag,
     /// The search dialog (command-center style) is open.
     pub search_open: bool,
+    /// The document being read off the main thread because it was still
+    /// only in iCloud (#406); opened when it arrives unless another was.
+    pub downloading: Option<String>,
     pub status: SaveStatus,
     pub row_menu: Option<RowMenu>,
     pub rename: Option<Rename>,
@@ -654,6 +657,7 @@ impl Workspace {
             place_menu: None,
             folder_drag: Default::default(),
             search_open: false,
+            downloading: None,
             status: SaveStatus::Idle,
             row_menu: None,
             rename: None,
@@ -752,6 +756,30 @@ impl Workspace {
         self.try_open(id, window, cx);
     }
 
+    /// Shows 正在从 iCloud 下载, reads `path` in the background (the system
+    /// downloads it to answer) and opens `id` once it is here, unless another
+    /// document was opened meanwhile. No retry when the read fails.
+    fn download_then_open(&mut self, id: &str, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.downloading = Some(id.to_string());
+        self.show_toast(crate::settings::tr("正在从 iCloud 下载…", "Downloading from iCloud…"), cx);
+        let target = id.to_string();
+        let read = cx.background_spawn(async move { std::fs::read(&path).map(|_| ()) });
+        cx.spawn_in(window, async move |this, cx| {
+            let r = read.await;
+            let _ = this.update_in(cx, |w, window, cx| {
+                if w.downloading.as_deref() != Some(target.as_str()) { return }
+                w.downloading = None;
+                match r {
+                    // Listed by its name until now: its title and words come with it.
+                    Ok(()) if w.store.cloud_only(&target).is_none() => { w.entries = w.store.list(); w.sort(); w.open(&target, window, cx); }
+                    Ok(()) => w.show_toast_kind(ToastKind::Error, crate::settings::tr("这篇文档还没有从 iCloud 下载完成", "This document hasn't finished downloading from iCloud"), cx),
+                    Err(e) => w.show_toast_kind(ToastKind::Error, &crate::localized_format!("无法从 iCloud 下载这篇文档：{}", "Could not download this document from iCloud: {}", e), cx),
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
+
     /// Show `id`; false when it could not be opened (or the open document
     /// could not be saved first, see [`Self::save_before`]).
     pub fn try_open(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -782,6 +810,13 @@ impl Workspace {
         let table = |w: &Self, i: &str| w.entries.iter().any(|e| e.id == i && e.meta.kind == crate::store::DocKind::Table);
         if let Some(cur) = self.current.clone() && table(self, &cur) { let _ = self.store.snapshot_table(&cur, true); }
         if table(self, id) { let _ = self.store.snapshot_table(id, true); }
+        // Still only in iCloud (#406): reading it downloads it, which can take
+        // as long as the network does, so it is read off the main thread.
+        if let Some(path) = self.store.cloud_only(id) {
+            if self.downloading.as_deref() != Some(id) { self.download_then_open(id, path, window, cx); }
+            return false;
+        }
+        self.downloading = None;
         let shared = !self.document_peers(id, window, cx).is_empty();
         let doc = match self.store.load_for_edit(id, shared) {
             Ok(d) => d,

@@ -16,6 +16,37 @@ pub use std::fs::*;
 #[cfg(target_family = "wasm")]
 pub use mem::*;
 
+/// Whether `path` is a placeholder whose contents are still only in the
+/// cloud (iCloud's optimized storage, #406): reading it blocks until it is
+/// downloaded, so nothing reads one on the main thread or in a background
+/// scan; stat and listing a folder don't download. macOS: the stat flag
+/// `SF_DATALESS`; false elsewhere. The one place that decides it (sync 1d
+/// may ask the file provider instead, and Windows' RECALL_ON_DATA_ACCESS).
+pub fn is_dataless(path: &Path) -> bool {
+    #[cfg(test)]
+    if DATALESS.with(|d| d.borrow().iter().any(|p| p == path)) { return true }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        const SF_DATALESS: u32 = 0x4000_0000;
+        std::fs::symlink_metadata(path).is_ok_and(|m| m.st_flags() & SF_DATALESS != 0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = path; false }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Files this test treats as cloud-only placeholders.
+    static DATALESS: std::cell::RefCell<Vec<std::path::PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Treat `path` as a cloud-only placeholder in this test thread (or no longer).
+#[cfg(test)]
+pub fn set_dataless(path: &Path, on: bool) {
+    DATALESS.with(|d| { let mut d = d.borrow_mut(); d.retain(|p| p != path); if on { d.push(path.to_path_buf()); } });
+}
+
 pub trait PathExt {
     fn fs_exists(&self) -> bool;
     fn fs_try_exists(&self) -> io::Result<bool>;

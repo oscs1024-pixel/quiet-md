@@ -383,7 +383,7 @@ impl Drop for Store {
 }
 
 /// The parts of an `Entry` that come from the document file.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Parsed { title: String, icon: Option<String>, body: std::sync::Arc<str>, reminders: Vec<crate::model::InlineReminder>, links: Vec<crate::model::DocLink> }
 
 /// `Store::parsed` kept between launches (#170): reading every document again
@@ -437,6 +437,9 @@ struct Batch { lock: Option<WriteLock>, depth: u32, index: std::cell::Cell<bool>
 /// files named by title, internal data in `.quiet/`. 5: what the files
 /// cannot say split by device, `.quiet/meta/<device id>.json` (`meta.rs`).
 pub const FORMAT: u32 = 5;
+
+/// `load` of a document still in iCloud.
+pub const NOT_DOWNLOADED: &str = "这篇文档还在从 iCloud 下载，请稍后再打开";
 /// The hidden folder holding the library's own data.
 pub const INTERNAL: &str = ".quiet";
 /// The hidden folder holding pasted and inserted images and attachments.
@@ -534,6 +537,7 @@ pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
 /// `write_atomic`; without `sync_dir` the folder's entry is left for the
 /// caller to sync (a batch syncs each folder once, before its index).
 fn write_atomic_then(path: &std::path::Path, bytes: &[u8], sync_dir: bool) -> Result<()> {
+    if held(path) { return Err(not_written(path)) }
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
     let tmp = PathBuf::from(tmp);
@@ -581,6 +585,10 @@ fn decoded(text: &str) -> String {
 /// Replace a cache file through a temporary file, without syncing it to
 /// the disk (a sync costs up to a good part of a second on a busy disk): a
 /// crash can leave an old, empty or torn copy, which its reader discards.
+fn not_written(path: &Path) -> anyhow::Error {
+    anyhow::anyhow!("{}还在 iCloud 上没有下载，没有写入，以免覆盖其他设备的内容", path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default())
+}
+
 fn write_cache(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
@@ -596,10 +604,30 @@ fn with_suffix(path: &std::path::Path, suffix: &str) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// The library's own files passed over this run because they were still only
+/// in iCloud (#406): read as missing, and never written, so this device's
+/// empty stand-in can't replace what another device wrote.
+static HELD: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether `path` is a cloud-only placeholder; if so it is held (see `HELD`).
+pub(crate) fn hold_dataless(path: &Path) -> bool {
+    if !crate::vfs::is_dataless(path) { return false }
+    let mut h = HELD.lock().unwrap();
+    if !h.iter().any(|p| p == path) { h.push(path.to_path_buf()); }
+    true
+}
+
+fn held(path: &Path) -> bool { HELD.lock().unwrap().iter().any(|p| p == path) }
+
+/// The warning for a file of the library's own passed over by `hold_dataless`.
+pub(crate) fn not_downloaded(what: &str) -> String { format!("{what}还在 iCloud 上没有下载，这次没有读取") }
+
 /// Read a JSON index written by `save_json`. A file that exists but does not
 /// parse is set aside as `<name>.corrupt-<time>` (never overwritten) and the
-/// previous version, `<name>.bak`, is used instead.
+/// previous version, `<name>.bak`, is used instead. One still only in iCloud
+/// is neither: read as missing and held, with a warning.
 fn load_json<T: serde::de::DeserializeOwned + Default>(path: &std::path::Path, what: &str, warnings: &mut Vec<String>) -> T {
+    if hold_dataless(path) { warnings.push(not_downloaded(what)); return T::default() }
     let bytes = match crate::vfs::read(path) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return T::default(),
@@ -634,6 +662,7 @@ fn foreign_of(disk: &DiskIndex) -> DiskIndex {
 }
 
 fn reread<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Option<T> {
+    if hold_dataless(path) { return None }
     serde_json::from_slice(&crate::vfs::read(path).ok()?).ok()
 }
 
@@ -641,6 +670,7 @@ fn reread<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Option<T> {
 /// `<name>.bak` for `load_json`. Unchanged contents are not rewritten (a
 /// synced library would upload every rewrite).
 fn save_json<T: Serialize>(path: &std::path::Path, v: &T) -> Result<()> {
+    if hold_dataless(path) { return Err(not_written(path)) }
     let bytes = serde_json::to_vec_pretty(v)?;
     match crate::vfs::read(path) {
         Ok(old) if old == bytes => return Ok(()),
@@ -967,6 +997,8 @@ impl Store {
             if ["-journal", "-wal", "-shm"].iter().any(|s| name.ends_with(s)) { continue }
             sizes.push((name, meta.len()));
         }
+        // Read, one still only in iCloud would be downloaded (#406).
+        if let Some(p) = pages.iter().find(|p| crate::vfs::is_dataless(p)) { anyhow::bail!("{} is not downloaded from iCloud", p.display()) }
         let mut used = std::collections::HashSet::new();
         // An open editor's sources are paths (`.assets/a b.png`), already in the
         // form the block holds them; a name is what the asset folder lists.
@@ -1197,6 +1229,10 @@ impl Store {
             let format = reread::<FormatMarker>(&root.join("format.json")).map_or(0, |m| m.format);
             anyhow::ensure!(format <= FORMAT, "这个文档库由更新版本的 Quiet.md 创建，请升级后再打开");
             if !root.join("format.json").fs_exists() { write_atomic(&root.join("format.json"), &serde_json::to_vec_pretty(&FormatMarker { format, id: String::new() })?)?; }
+        } else if hold_dataless(&marker) {
+            // Still only in iCloud: opened as the layout on disk says, and
+            // nothing that would rewrite it (moving on, a new id) runs now.
+            warnings.push(not_downloaded("format.json"));
         } else {
             match crate::vfs::read(&marker).ok().and_then(|b| serde_json::from_slice::<FormatMarker>(&b).ok()) {
                 Some(m) if m.format > FORMAT => anyhow::bail!("这个文档库由更新版本的 Quiet.md 创建，请升级后再打开"),
@@ -1254,7 +1290,13 @@ impl Store {
     }
 
     /// The format `root`'s `.quiet/format.json` names (0: none).
-    fn format_at(root: &Path) -> u32 { reread::<FormatMarker>(&root.join(INTERNAL).join("format.json")).map_or(0, |m| m.format) }
+    /// One still only in iCloud: 5 when the per-device index folder is
+    /// there, else 4 (the formats with a `.quiet/`).
+    fn format_at(root: &Path) -> u32 {
+        let marker = root.join(INTERNAL).join("format.json");
+        if crate::vfs::is_dataless(&marker) { return if meta::dir(root).fs_is_dir() { FORMAT } else { 4 } }
+        reread::<FormatMarker>(&marker).map_or(0, |m| m.format)
+    }
 
     /// FORMAT 5: the index from every device's file (sync.md 3.3). Entries
     /// whose files are not here (yet) come along and `list` passes them over.
@@ -1710,6 +1752,8 @@ impl Store {
             let stamp = md.as_ref().and_then(|m| Some((m.modified().ok()?, m.len())));
             let parsed = match self.parsed.get(&id).filter(|c| stamp == Some((c.0, c.1))) {
                 Some(c) => c.2.clone(),
+                // Still only in iCloud (#406): listed by its name, read once someone opens it.
+                None if crate::vfs::is_dataless(&p) => Parsed { title: self.index.get(&id).and_then(|m| m.name.clone()).unwrap_or_default(), ..Default::default() },
                 None => {
                     #[cfg(test)]
                     DOC_READS.with(|n| n.set(n.get() + 1));
@@ -1912,7 +1956,12 @@ impl Store {
             let stamp = md.as_ref().and_then(|m| Some((m.modified().ok()?, m.len())));
             let parsed = match self.parsed.get(&id).filter(|c| stamp == Some((c.0, c.1))) {
                 Some(c) => c.2.clone(),
+                // Still only in iCloud (#406): listed by its name, read once
+                // someone opens it; reading it here would download the library.
+                None if crate::vfs::is_dataless(&p) => Parsed { title: stem_of(base_name(&m.rel)).to_string(), ..Default::default() },
                 None => {
+                    #[cfg(test)]
+                    DOC_READS.with(|n| n.set(n.get() + 1));
                     // a 数据表 is not text: its words come from the file's cells
                     let table = table_file(&p);
                     let Ok(text) = (if table { Ok(String::new()) } else { crate::vfs::read_to_string(&p) }) else { continue };
@@ -1974,13 +2023,21 @@ impl Store {
         let p = self.path(id);
         // a 数据表 is not text: the table reads its own file
         if self.kind(id) == DocKind::Table { anyhow::ensure!(p.fs_exists(), "数据表文件已不在原处，可能已被移动或删除"); return Ok(String::new()); }
+        anyhow::ensure!(!crate::vfs::is_dataless(&p), NOT_DOWNLOADED);
         match crate::vfs::read_to_string(&p) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && layout::placeholder(&p).is_some_and(|ph| ph.fs_exists()) => {
                 if let Some(ph) = layout::placeholder(&p) { layout::download(&ph); }
-                anyhow::bail!("这篇文档还在从 iCloud 下载，请稍后再打开")
+                anyhow::bail!(NOT_DOWNLOADED)
             }
             r => Ok(r?),
         }
+    }
+
+    /// The file of `id` when it is still only in iCloud (#406): `load` fails
+    /// on it at once, and reading it (off the main thread) downloads it.
+    pub fn cloud_only(&self, id: &str) -> Option<PathBuf> {
+        let p = self.path(id);
+        (self.index.contains_key(id) && crate::vfs::is_dataless(&p)).then_some(p)
     }
 
     pub fn load(&self, id: &str) -> Result<Document> {
@@ -2506,7 +2563,7 @@ impl Store {
             .iter()
             .filter(|(_, t)| t.root.as_ref().is_none_or(|r| !self.trash.contains_key(r)))
             .map(|(id, t)| {
-                let doc = if t.meta.named_by_file() || t.meta.folder.is_some() { Document::default() } else { crate::vfs::read_to_string(self.trash_path(id)).ok().and_then(|x| docxml::parse(&x).ok()).unwrap_or_default() };
+                let doc = if t.meta.named_by_file() || t.meta.folder.is_some() || crate::vfs::is_dataless(&self.trash_path(id)) { Document::default() } else { crate::vfs::read_to_string(self.trash_path(id)).ok().and_then(|x| docxml::parse(&x).ok()).unwrap_or_default() };
                 TrashEntry {
                     id: id.clone(),
                     title: t.meta.folder.clone().or_else(|| t.meta.name.clone()).unwrap_or_else(|| doc.title.text.clone()),
@@ -5007,4 +5064,81 @@ mod tests {
         assert_eq!(Store::root_look_at(&lib.0), look);
     }
 
+    /// #406: a document still only in iCloud is listed by its file name and
+    /// not read (reading downloads it), and loading it fails at once; once
+    /// it is here it is read as usual.
+    #[test]
+    fn cloud_only_documents_are_listed_unread() {
+        let lib = Lib::new("dataless");
+        let mut s = lib.open();
+        s.create_from(&doc("本地")).unwrap();
+        let _ = s.list();
+        let file = lib.0.join("云端笔记.xml");
+        crate::vfs::write(&file, docxml::serialize(&doc("标题在文件里"))).unwrap();
+        crate::vfs::set_dataless(&file, true);
+        let mut s = lib.open();
+        // The first list finds the new file, which re-reads 本地 (paths changed).
+        let _ = s.list();
+        DOC_READS.with(|n| n.set(0));
+        let list = s.list();
+        assert_eq!(DOC_READS.with(|n| n.get()), 0, "云端笔记 must not be read");
+        let cloud = list.iter().find(|e| e.title == "云端笔记").expect("listed by its file name");
+        assert!(cloud.body.is_empty());
+        assert_eq!(s.cloud_only(&cloud.id), Some(file.clone()));
+        assert_eq!(s.load(&cloud.id).unwrap_err().to_string(), NOT_DOWNLOADED);
+        // Not cached as read: once downloaded, the next list reads it.
+        crate::vfs::set_dataless(&file, false);
+        assert_eq!(s.cloud_only(&cloud.id), None);
+        let list = s.list();
+        assert!(list.iter().any(|e| e.title == "标题在文件里"));
+        assert_eq!(s.load(&cloud.id).unwrap().title.text, "标题在文件里");
+    }
+
+    /// #406: the library's own files still only in iCloud are passed over
+    /// with a warning: not restored from `.bak`, not set aside as
+    /// `.corrupt-`, and never written over (another device's data).
+    #[test]
+    fn cloud_only_library_files_are_held_not_replaced() {
+        let lib = Lib::new("dataless-meta");
+        let mut s = lib.open();
+        let id = s.create_from(&doc("一")).unwrap();
+        s.set_pinned(&id, true).unwrap();
+        let other = meta::dir(&lib.0).join("other-device.json");
+        crate::vfs::write(&other, b"{}").unwrap();
+        let trash = lib.0.join(INTERNAL).join("trash").join("index.json");
+        crate::vfs::create_dir_all(trash.parent().unwrap()).unwrap();
+        crate::vfs::write(&trash, b"{}").unwrap();
+        let mine = lib.meta_file();
+        let (before, marker) = (crate::vfs::read(&mine).unwrap(), lib.0.join(INTERNAL).join("format.json"));
+        let format = crate::vfs::read(&marker).unwrap();
+        for f in [&mine, &other, &trash, &marker] { crate::vfs::set_dataless(f, true); }
+        let mut s = lib.open();
+        for what in ["文档索引", "other-device.json", "回收站索引", "format.json"] {
+            assert!(s.warnings.iter().any(|w| w == &not_downloaded(what)), "{what}: {:?}", s.warnings);
+        }
+        assert!(s.warnings.iter().all(|w| !w.contains("备份") && !w.contains("损坏")), "{:?}", s.warnings);
+        assert_eq!(Store::format_at(&lib.0), FORMAT, "the layout on disk says 5");
+        // This device's changes can't go to its file now: refused, not written over.
+        let _ = s.list();
+        assert!(s.create_from(&doc("二")).is_err());
+        assert_eq!(crate::vfs::read(&mine).unwrap(), before);
+        assert_eq!(crate::vfs::read(&marker).unwrap(), format);
+        let names: Vec<String> = crate::vfs::read_dir(meta::dir(&lib.0)).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.iter().all(|n| !n.contains(".corrupt-")), "{names:?}");
+    }
+
+    /// #406: 回收站 lists a page still only in iCloud without reading it.
+    #[test]
+    fn cloud_only_trash_is_listed_unread() {
+        let lib = Lib::new("dataless-trash");
+        let mut s = lib.open();
+        let id = s.create_from(&doc("要删")).unwrap();
+        s.delete(&id, None).unwrap();
+        crate::vfs::set_dataless(&s.trash_path(&id), true);
+        let t = s.list_trash();
+        assert_eq!(t.len(), 1);
+        crate::vfs::write(s.trash_path(&id), b"not even xml").unwrap();
+        // Read, it would not parse either: what shows comes from the index.
+        assert_eq!(s.list_trash()[0].id, id);
+    }
 }
