@@ -65,6 +65,7 @@ globalThis.lib = {
   create(title, o = {}) { const r = __call("create", { title, folder: o.folder ?? o.in, md: o.md, markdown: o.markdown, kind: o.kind, csv: o.csv, fields: o.fields }); return r.key ? new Doc(r) : r; },
   mkdir(name, o = {}) { return __call("mkdir", { name, folder: o.folder ?? o.in }); },
   check() { return __call("check"); },
+  roots() { return __call("roots"); },
   trash() { return __call("trash_list").items; },
   untrash(name) { return __call("untrash", { name }); },
   call: __call,

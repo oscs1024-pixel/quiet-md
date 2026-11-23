@@ -15,8 +15,8 @@ const IMPORT_LIMIT: u64 = 32 * 1024 * 1024;
 impl Session {
     /// The version `spec` names among `id`'s: its file name, or `1` for the
     /// newest, `2` the one before…
-    fn version(&self, id: &str, spec: &str) -> R<fdl_core::versions::Version> {
-        let list = self.store.versions(id);
+    fn version(&mut self, id: &str, spec: &str) -> R<fdl_core::versions::Version> {
+        let list = self.lib_of(id)?.versions(id);
         let s = spec.trim().trim_start_matches('@');
         let hit = match s.parse::<usize>() {
             Ok(n) if n >= 1 && n <= list.len() && s.len() < 6 => list.get(n - 1).cloned(),
@@ -32,14 +32,15 @@ impl Session {
         let path = self.docs[i].path.clone();
         if let Some(spec) = arg(a, "version") {
             let v = self.version(&id, spec)?;
-            let lines = self.store.version_diff(&id, &v.name, None).map_err(|e| fail("io", format!("{e:#}")))?;
+            let lines = self.lib_of(&id)?.version_diff(&id, &v.name, None).map_err(|e| fail("io", format!("{e:#}")))?;
             return Ok(json!({ "path": path, "version": v.name, "time": date_ms(v.ms), "label": v.label, "diff": diff_lines(&lines) }));
         }
         // What the save after each version changed: from it to the next newer one (or now).
-        let all = self.store.versions(&id);
+        let store = self.lib_of(&id)?;
+        let all = store.versions(&id);
         let list: Vec<Value> = all.iter().enumerate().map(|(n, v)| {
             let newer = n.checked_sub(1).map(|k| all[k].name.as_str());
-            let lines = self.store.version_diff(&id, &v.name, newer).unwrap_or_default();
+            let lines = store.version_diff(&id, &v.name, newer).unwrap_or_default();
             let (add, del) = lines.iter().fold((0, 0), |(a, d), l| match l.kind { fdl_core::diff::Kind::Added => (a + 1, d), fdl_core::diff::Kind::Removed => (a, d + 1), _ => (a, d) });
             json!({ "n": n + 1, "version": v.name, "time": date_ms(v.ms), "size": v.size, "label": v.label, "then": format!("+{add} -{del}") })
         }).collect();
@@ -55,27 +56,35 @@ impl Session {
             self.pending.push(Pending::RestoreTable { id, version: v.name.clone() });
             return Ok(json!({ "path": self.docs[i].path, "restore": v.name, "time": date_ms(v.ms) }));
         }
-        let doc = self.store.version_document(&id, &v.name).map_err(|e| fail("io", format!("{e:#}")))?;
+        let doc = self.lib_of(&id)?.version_document(&id, &v.name).map_err(|e| fail("io", format!("{e:#}")))?;
         let d = &mut self.docs[i];
         if d.doc != doc { d.doc = doc; d.dirty = true; d.keep_version = true; }
         Ok(json!({ "path": d.path, "restore": v.name, "time": date_ms(v.ms) }))
     }
 
+    /// Every root's 回收站 (each root keeps its own), as (root key, entry).
+    fn all_trash(&mut self) -> Vec<(String, fdl_core::store::TrashEntry)> {
+        let only = self.only.clone();
+        self.ws.roots.iter_mut().filter(|r| only.as_ref().is_none_or(|k| k == &r.key)).filter_map(|r| Some((r.key.clone(), r.store.as_mut()?)))
+            .flat_map(|(k, s)| s.list_trash().into_iter().map(move |t| (k.clone(), t))).collect()
+    }
+
     pub(crate) fn trash_list(&mut self) -> R<Value> {
-        let list: Vec<Value> = self.store.list_trash().iter().map(|t| json!({ "id": t.id, "title": t.title, "deleted": date_ms(t.deleted * 1000) })).collect();
+        let list: Vec<Value> = self.all_trash().iter().map(|(k, t)| json!({ "id": t.id, "title": t.title, "root": self.root_name(k), "deleted": date_ms(t.deleted * 1000) })).collect();
         Ok(json!({ "days": fdl_core::store::TRASH_DAYS, "items": list }))
     }
 
     /// Bring a document back from the 回收站 (by title or id), when the command or script ends.
     pub(crate) fn untrash(&mut self, a: &Value) -> R<Value> {
         let spec = need(a, "name")?.trim();
-        let list = self.store.list_trash();
-        let hits: Vec<_> = list.iter().filter(|t| t.id == spec || t.title == spec).collect();
-        let hits = if hits.is_empty() { list.iter().filter(|t| t.title.to_lowercase().contains(&spec.to_lowercase())).collect() } else { hits };
+        let list = self.all_trash();
+        let hits: Vec<_> = list.iter().filter(|(_, t)| t.id == spec || t.title == spec).collect();
+        let hits = if hits.is_empty() { list.iter().filter(|(_, t)| t.title.to_lowercase().contains(&spec.to_lowercase())).collect() } else { hits };
         match hits.as_slice() {
-            [t] => { self.pending.push(Pending::Untrash { id: t.id.clone(), title: t.title.clone() }); Ok(json!({ "title": t.title, "untrash": true })) }
+            // Back into the root whose 回收站 it is in.
+            [(k, t)] => { self.pending.push(Pending::Untrash { root: k.clone(), id: t.id.clone(), title: t.title.clone() }); Ok(json!({ "title": t.title, "root": self.root_name(k), "untrash": true })) }
             [] => Err(fail("not_found", format!("nothing called {spec:?} in the trash")).hint("`quiet trash` lists it")),
-            many => Err(fail("ambiguous", format!("{} items match {spec:?}: {}", many.len(), many.iter().map(|t| format!("{} ({})", t.title, t.id)).collect::<Vec<_>>().join(", "))).hint("pass the id")),
+            many => Err(fail("ambiguous", format!("{} items match {spec:?}: {}", many.len(), many.iter().map(|(k, t)| if self.multi() { format!("{} ({}, in {})", t.title, t.id, self.root_name(k)) } else { format!("{} ({})", t.title, t.id) }).collect::<Vec<_>>().join(", "))).hint("pass the id")),
         }
     }
 
@@ -85,10 +94,11 @@ impl Session {
         let path = PathBuf::from(need(a, "path")?);
         if !path.is_file() { return Err(fail("not_found", format!("no file {}", path.display()))); }
         kind_of_file(&path)?;
-        let folder = self.find_folder(arg(a, "folder"))?;
+        let (root, folder) = self.landing(arg(a, "folder"))?;
         let to = self.folder_rel(folder.as_deref());
-        self.pending.push(Pending::Import { path: path.clone(), folder: Some(to.clone()).filter(|t| !t.is_empty()) });
-        Ok(json!({ "path": path.display().to_string(), "import": true, "to": if to.is_empty() { "/".to_string() } else { to } }))
+        let name = self.root_name(&root);
+        self.pending.push(Pending::Import { root, path: path.clone(), folder: Some(to.clone()).filter(|t| !t.is_empty()) });
+        Ok(json!({ "path": path.display().to_string(), "import": true, "root": name, "to": if to.is_empty() { "/".to_string() } else { to } }))
     }
 }
 

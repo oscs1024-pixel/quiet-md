@@ -57,10 +57,12 @@ impl Session {
     /// The table file, read once per run; and which of its tables `a` names.
     fn open_table(&mut self, a: &Value) -> R<(usize, TableId)> {
         let tref = self.table_ref(a)?;
-        let k = match self.tables.iter().position(|t| t.src == tref.src) {
+        // Relative to the root the document is in.
+        let i = self.doc_arg(a)?;
+        let path = self.root_dir(&self.docs[i].root).join(&tref.src);
+        let k = match self.tables.iter().position(|t| t.path == path) {
             Some(k) => k,
             None => {
-                let path = self.root.join(&tref.src);
                 let stamp = sqlite::stamp(&path);
                 let base = sqlite::load(&path).map_err(|e| fail("io", format!("{}: {e:#}", tref.src)))?;
                 self.tables.push(OpenTable { src: tref.src.clone(), path, stamp, doc: ops::Doc::new(base), log: vec![] });

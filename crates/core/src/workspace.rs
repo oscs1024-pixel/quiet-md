@@ -128,9 +128,15 @@ impl Workspace {
     /// still moves to the new layout without asking when it may (`Store::open`).
     pub fn open(entries: Vec<RootEntry>, fixed: bool) -> Self {
         let legacy = Store::legacy_root();
+        Self::open_with(entries, fixed, |e| if e.path == legacy && e.path.fs_is_dir() { Store::open_library(e.path.clone()) } else { Store::open_root(&e.path) })
+    }
+
+    /// `open`, each root's library opened by `open`: tools beside the app
+    /// (the `quiet` CLI) open them as they are and leave crash copies alone.
+    pub fn open_with(entries: Vec<RootEntry>, fixed: bool, mut open: impl FnMut(&RootEntry) -> Result<Store>) -> Self {
         let mut ws = Workspace { fixed, ..Default::default() };
         for e in entries {
-            let store = if e.path == legacy && e.path.fs_is_dir() { Store::open_library(e.path.clone()) } else { Store::open_root(&e.path) };
+            let store = open(&e);
             ws.push(e.key, e.path, store);
         }
         ws

@@ -13,6 +13,7 @@ pub const HELP: &str = "quiet — read, search, edit and script a Quiet.md libra
   quiet blocks DOC[#REF] [--kind K] [--grep TEXT] [--done|--undone]
   quiet links DOC                        mentions out of and into DOC
   quiet check                            broken links, unreadable files, unused assets
+  quiet roots                            the folders Quiet.md has open, and which open
 
   quiet new TITLE [--in FOLDER] [--md TEXT|-] [--kind doc|md|board|table]
   quiet mkdir NAME [--in FOLDER]
@@ -41,8 +42,10 @@ pub const HELP: &str = "quiet — read, search, edit and script a Quiet.md libra
 Writes take --dry-run (show the diff, write nothing) and --expect-rev REV.
 DOC is a path (工作/周报.xml, extension optional) or a title. REF is what
 outline/blocks print (#3~k7f2: position and fingerprint), a position (#2.1)
-or a heading's text. Global: --library DIR (else QUIET_MD_HOME, else the
-app's library), --json.";
+or a heading's text. The library is every folder Quiet.md has open on this
+computer (`quiet roots`): DOC is found in any of them, new things go to the
+first. Global: --root NAME|PATH (one of them), --library DIR (that folder
+alone), --json.";
 
 /// (names, usage and notes).
 const COMMANDS: &[(&[&str], &str)] = &[
@@ -168,7 +171,8 @@ DOC put back as it was at VERSION. What it has now is kept as a version
 first, so a restore can itself be undone."),
     (&["trash"], "quiet trash
 
-What is in the trash (kept 30 days), with ids for `quiet untrash`."),
+What is in the trash (kept 30 days), with ids for `quiet untrash`. Each root
+has its own; untrash puts a document back in its root."),
     (&["untrash"], "quiet untrash NAME
 
 Brings the document called NAME (or with that id) back from the trash, to where it was."),
@@ -187,14 +191,22 @@ is written. Top-level await and return work; a returned value is printed.
     (&["call"], "quiet call OP [JSON|-]
 
 Any operation by its name with JSON arguments, as `lib.call` in a script.
-Operations: ls find open outline read blocks links check history trash_list
+Operations: ls find open outline read blocks links check roots history trash_list
 (reading); insert replace remove move set create mkdir rename mv trash
 restore untrash import table table_add table_update table_delete board
 board_add board_remove. Arguments are the commands' options by name, the
 document as \"doc\" and a block as \"at\".
 
   quiet call blocks '{\"doc\": \"周报\", \"kind\": \"todo\", \"done\": false}'"),
-    (&["mcp"], "quiet mcp [--library DIR]
+    (&["roots"], "quiet roots
+
+The folders Quiet.md has open on this computer, in the sidebar's order: name,
+path, key, how many documents, or why one does not open (its folder is gone,
+say). Commands see all of them; --root NAME (or its path or key) narrows one
+command to one, and is the place `new`, `mkdir` and `import` write to.
+Documents with the same path or title in two roots need --root or their id.
+Moving a document to another root is not supported yet."),
+    (&["mcp"], "quiet mcp [--library DIR] [--root ROOT]
 
 An MCP server on stdin/stdout with two tools: `quiet` (a command line) and
 `quiet_run` (a script). For agents that speak MCP but have no shell. E.g. in

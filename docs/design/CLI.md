@@ -26,6 +26,17 @@
 
 ## 现状
 
+- **文档库在哪：** 和应用一样，是这台电脑上应用打开的全部根文件夹（工作区，见 [workspaces.md](workspaces.md)）。CLI 用 core 的 `Workspace::entries()` 读同一份 `roots.json`（设了 `QUIET_MD_HOME` 就只有那一个根，测试用 `QUIET_MD_ROOTS` 指向临时的列表），顺序也一样；不写 `roots.json`。每个根用 `Store::open_for_tools` 打开：文件夹不在了就标为不可用，不会新建；崩溃留下的副本留给应用恢复。
+  - `quiet roots`：列出根（名字、路径、key、文档数，或打不开的原因）。
+  - `--root 名字|路径|key`：只看这一个根。名字按 `Root::name()`，不分大小写；找不到报 `no_root`，提示里列出所有根。
+  - `--library DIR`：只操作这一个文件夹（单根工作区）。
+  - 一个根都没有：`no_library`。
+- **多根：**
+  - 文档按路径或标题在所有可用的根里找；不同根里有同名的报 `ambiguous`，提示里带根名和 `--root` 用法。按 id 直接定位（id 跨根唯一，W14）。
+  - `ls`、`find`、`trash` 的 JSON 总带 `root`；文本只在看得到多个根时才写根名。
+  - 新建、建文件夹、导入的落点：`--in` 文件夹所在的根，否则 `--root`，否则第一个能打开的根（和应用一致），输出里写明落到哪个根。
+  - 回收站、版本历史按根各自处理；`untrash` 放回原来的根。把文档移到另一个根暂不支持，报 `cross_root`。
+  - 写入走各根自己的 `Store`（各自的写锁），CLI 不另加全局锁。
 - **读：**
   - `ls`、`find`（多词、排序）、`outline`、`read`（md/text/xml/json；可按 ref、章节或去掉标题的章节读；默认上限 40k 字符）
   - `blocks`（按类型、文字、完成状态筛选）、`links`、`check`

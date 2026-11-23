@@ -144,6 +144,7 @@ fn to_calls(cmd: &str, a: &mut Args, input: &mut Input) -> R<(Vec<(String, Value
         ("blocks", _) => { with_doc(&mut v, false)?; put(&mut v, "kind", a.get("kind")); put(&mut v, "grep", a.get("grep")); put(&mut v, "done", done(a)); "blocks" }
         ("links", _) => { with_doc(&mut v, false)?; "links" }
         ("check", _) => "check",
+        ("roots", _) => "roots",
         ("history", _) => { with_doc(&mut v, false)?; put(&mut v, "version", a.pos.get(1).cloned()); "history" }
         ("restore", _) => { with_doc(&mut v, false)?; v["version"] = json!(a.nth(1, "a version (from `quiet history DOC`)")?); "restore" }
         ("trash", _) => { if !a.pos.is_empty() { return Err(fail("usage", "`quiet trash` lists the trash; `quiet rm DOC` moves a document there")); } "trash_list" }
@@ -244,7 +245,8 @@ pub fn execute(raw: Vec<String>, mut input: Input, out: &mut String) -> R<()> {
     }
     let json_out = a.has("json");
     let dry = a.has("dry-run");
-    let mut s = Session::open(session::library_dir(a.get("library")))?;
+    let mut s = Session::open(a.get("library"), a.get("root"))?;
+    let multi = s.multi();
     if cmd == "run" {
         let code = match (a.get("code"), a.pos.first().map(String::as_str)) {
             (Some(c), _) => c.to_string(),
@@ -257,7 +259,7 @@ pub fn execute(raw: Vec<String>, mut input: Input, out: &mut String) -> R<()> {
         r?;
         if s.changed() {
             let report = s.commit(dry)?;
-            if json_out { *out += &format!("{}\n", json!({ "committed": !dry, "changes": report })); } else { *out += &output::report(&report, dry); }
+            if json_out { *out += &format!("{}\n", json!({ "committed": !dry, "changes": report })); } else { *out += &output::report(&report, dry, multi); }
         }
         return Ok(());
     }
@@ -265,7 +267,7 @@ pub fn execute(raw: Vec<String>, mut input: Input, out: &mut String) -> R<()> {
     let mut results = vec![];
     for (op, args) in &calls {
         let v = s.call(op, args)?;
-        if !json_out { *out += &output::text(op, &v); }
+        if !json_out { *out += &output::text(op, &v, multi); }
         results.push(v);
     }
     let mut v = if results.len() == 1 { results.pop().unwrap() } else { json!(results) };
@@ -275,7 +277,7 @@ pub fn execute(raw: Vec<String>, mut input: Input, out: &mut String) -> R<()> {
             if !v.is_object() { v = json!({ "results": v }); }
             v["changes"] = report;
             v["committed"] = json!(!dry);
-        } else { *out += &output::report(&report, dry); }
+        } else { *out += &output::report(&report, dry, multi); }
     }
     if json_out { *out += &format!("{v}\n"); }
     Ok(())

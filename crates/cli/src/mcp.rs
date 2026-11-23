@@ -90,8 +90,8 @@ fn handle(msg: &Value, library: &[String]) -> Option<Value> {
 }
 
 pub fn serve(args: Vec<String>) -> i32 {
-    // `--library DIR` applies to every call.
-    let library: Vec<String> = match args.iter().position(|a| a == "--library") { Some(i) if i + 1 < args.len() => vec!["--library".into(), args[i + 1].clone()], _ => vec![] };
+    // `--library DIR` and `--root ROOT` apply to every call.
+    let library: Vec<String> = ["--library", "--root"].iter().flat_map(|k| match args.iter().position(|a| a == k) { Some(i) if i + 1 < args.len() => vec![k.to_string(), args[i + 1].clone()], _ => vec![] }).collect();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {

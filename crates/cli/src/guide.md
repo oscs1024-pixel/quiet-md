@@ -93,8 +93,17 @@ moves and show as backlinks) are written `[[path or title]]`, e.g.
 `见 [[项目/方案]]`; a Markdown link to a library file (`[方案](项目/方案.xml)`)
 becomes one too. Reading as Markdown writes mentions back as `[[path]]`, so
 copied sections keep their links.
-Global options: `--library DIR` (else `QUIET_MD_HOME`, else the app's
-library) and `--json` (every field, for parsing).
+**Where the library is.** Every folder the user has open in Quiet.md on
+this computer (its sidebar's roots; `quiet roots` lists them, and says why
+one is unavailable). Documents are found in any of them; `ls` and `find`
+say which root each is in when there are several. A path or title in two
+roots is `ambiguous`: add `--root NAME` (the folder's name, any case, or its
+path), or use the document's id from `ls --json`. New documents, folders and
+imports go into the `--in` folder's root, else `--root`, else the first
+root, and the output says which. Each root keeps its own trash and
+versions; moving a document to another root is not supported (`cross_root`).
+Global options: `--root NAME`, `--library DIR` (that folder alone, not the
+app's list) and `--json` (every field, for parsing).
 
 Kinds of blocks: text, h1…h9, bullet, ordered, todo, code, quote, callout,
 divider, image, table, grid, column, file, board, datatable, countdown,
@@ -127,15 +136,16 @@ Write the script to a file and run `quiet run script.js`; short ones go in
 Top-level `await` and `return` work; a returned value is printed. `help()` and
 `help("name")` print this section from inside a script.
 
-- `lib.ls(folder?, {recursive, kind})` → `[{path, title, kind, modified}]`
-- `lib.find(words, {folder, limit})` → `{total, results: [{path, title, rev, hits: [{ref, kind, text}]}]}`
+- `lib.ls(folder?, {recursive, kind})` → `[{path, root, id, title, kind, modified}]`
+- `lib.find(words, {folder, limit})` → `{total, results: [{path, root, title, rev, hits: [{ref, kind, text}]}]}`
 - `lib.doc(path, {rev})` → `Doc` (throws `not_found` / `ambiguous` / `stale_rev`)
 - `lib.create(title, {folder, md, kind, fields, csv})` → `Doc` (a table: `{path}`), written when the script ends
 - `lib.mkdir(name, {folder})`
 - `lib.check()` → `{documents, issues: [{path, code, message}]}`
-- `lib.trash()` → `[{id, title, deleted}]`; `lib.untrash(name)`
+- `lib.roots()` → `[{name, path, key, available, documents?, error?, default?}]`
+- `lib.trash()` → `[{id, title, root, deleted}]`; `lib.untrash(name)`
 - `lib.call(op, args)` → any operation, as `quiet call`
-- `doc.path`, `doc.title`, `doc.kind`, `doc.rev`, `doc.block_count`
+- `doc.path`, `doc.root`, `doc.title`, `doc.kind`, `doc.rev`, `doc.block_count`
 - `doc.outline()` → `{headings: [{ref, level, text, chars}], top?, chars, …}`
 - `doc.blocks({kind, grep, done, within})` → `[{ref, id, kind, text, depth, level?, done?, children?}]`
 - `doc.block(ref)`, `doc.section(ref)` → block objects

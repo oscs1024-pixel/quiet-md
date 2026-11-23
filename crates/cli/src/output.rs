@@ -24,20 +24,28 @@ fn size(n: u64) -> String { if n >= 1000 { format!("{:.1}k", n as f64 / 1000.) }
 
 fn cell(v: &Value, k: &str) -> String { s(v, k).replace('|', "\\|").replace('\n', " ") }
 
+/// `ROOT: ` before a path when the run sees several roots.
+fn root(v: &Value, multi: bool) -> String { if multi && v.get("root").is_some() { format!("{}: ", s(v, "root")) } else { String::new() } }
+
 /// Compact text for people and agents alike; `--json` has every field.
-pub fn text(op: &str, v: &Value) -> String {
+/// `multi`: the run sees several roots, so paths say which.
+pub fn text(op: &str, v: &Value, multi: bool) -> String {
     let mut o = String::new();
     match op {
         "ls" => for e in v.as_array().into_iter().flatten() {
             let mark = format!("{}{}", if e.get("pinned").is_some() { " pinned" } else { "" }, if e.get("starred").is_some() { " starred" } else { "" });
-            if s(e, "kind") == "folder" { o += &format!("{}/\n", s(e, "path")); } else { o += &format!("{}  [{}] {}{mark}\n", s(e, "path"), s(e, "kind"), s(e, "modified")); }
+            if s(e, "kind") == "folder" { o += &format!("{}{}/\n", root(e, multi), s(e, "path")); } else { o += &format!("{}{}  [{}] {}{mark}\n", root(e, multi), s(e, "path"), s(e, "kind"), s(e, "modified")); }
+        },
+        "roots" => for r in v.as_array().into_iter().flatten() {
+            let state = match r.get("documents") { Some(n) => format!("{n} documents{}", if r.get("default").is_some() { ", new documents go here" } else { "" }), None => format!("unavailable: {}", s(r, "error")) };
+            o += &format!("{}  {}  ({state})  key {}\n", s(r, "name"), s(r, "path"), s(r, "key"));
         },
         "find" => {
             let res: Vec<&Value> = list(v, "results").collect();
             let total = v["total"].as_u64().unwrap_or(0) as usize;
             o += &format!("{total} documents match{}\n", if res.len() < total { format!(" (first {} shown; --limit for more)", res.len()) } else { String::new() });
             for r in res {
-                o += &format!("\n{}  rev {}\n", s(r, "path"), s(r, "rev"));
+                o += &format!("\n{}{}  rev {}\n", root(r, multi), s(r, "path"), s(r, "rev"));
                 for h in list(r, "hits") { o += &format!("  {:<12} {:<8} {}\n", s(h, "ref"), s(h, "kind"), s(h, "text")); }
                 if let Some(n) = r.get("more_hits") { o += &format!("  … {n} more blocks match (quiet blocks DOC --grep WORD)\n"); }
             }
@@ -93,7 +101,7 @@ pub fn text(op: &str, v: &Value) -> String {
         "trash_list" => {
             let items: Vec<&Value> = list(v, "items").collect();
             o += &format!("{} in the trash (kept {} days)\n", items.len(), s(v, "days"));
-            for t in items { o += &format!("{}  {}  ({})\n", s(t, "deleted"), s(t, "title"), s(t, "id")); }
+            for t in items { o += &format!("{}  {}{}  ({})\n", s(t, "deleted"), root(t, multi), s(t, "title"), s(t, "id")); }
         }
         "check" => {
             let issues: Vec<&Value> = list(v, "issues").collect();
@@ -116,13 +124,14 @@ pub fn text(op: &str, v: &Value) -> String {
     o
 }
 
-/// What a commit wrote (or, `dry`, would write).
-pub fn report(r: &Value, dry: bool) -> String {
+/// What a commit wrote (or, `dry`, would write); `multi`: which root new things went to.
+pub fn report(r: &Value, dry: bool, multi: bool) -> String {
     let mut o = String::new();
     for c in r.as_array().into_iter().flatten() {
         let rev = match (c.get("rev_before"), c.get("rev")) { (Some(a), Some(b)) => format!("  rev {} → {}", a.as_str().unwrap_or(""), b.as_str().unwrap_or("")), (None, Some(b)) => format!("  rev {}", b.as_str().unwrap_or("")), _ => String::new() };
         let extra = c.get("from").map(|f| format!("  (was {})", f.as_str().unwrap_or(""))).or_else(|| c.get("source").map(|f| format!("  (from {})", f.as_str().unwrap_or("")))).or_else(|| c.get("to").map(|t| format!(" → {}", t.as_str().unwrap_or("")))).unwrap_or_default();
-        o += &format!("{} {}{extra}{rev}\n", s(c, "action"), s(c, "path"));
+        let at = if multi && c.get("root").is_some() { format!(" (in {})", s(c, "root")) } else { String::new() };
+        o += &format!("{} {}{at}{extra}{rev}\n", s(c, "action"), s(c, "path"));
         for l in list(c, "diff").chain(list(c, "changes")) { o += &format!("    {}\n", l.as_str().unwrap_or("")); }
     }
     if dry { o += if r.as_array().is_some_and(|l| !l.is_empty()) { "(dry run: nothing written)\n" } else { "(dry run: nothing would change)\n" }; }
